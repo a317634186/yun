@@ -47,6 +47,14 @@ set_env() { # $1=变量名 $2=值
     fi
 }
 
+MENU_IP=""
+get_ip() {
+    if [ -z "$MENU_IP" ]; then
+        MENU_IP=$(curl -s --max-time 3 http://ifconfig.me 2>/dev/null || true)
+    fi
+    echo "${MENU_IP:-VPS公网IP}"
+}
+
 install_docker() {
     info "未检测到 Docker，开始自动安装（约 1-3 分钟）..."
     if ! curl -fsSL --connect-timeout 15 https://get.docker.com | $SUDO sh; then
@@ -71,7 +79,7 @@ auto_configure() {
         -H "Authorization: $token" -H 'Content-Type: application/json' \
         -d '[{"key":"aria2.rpc.url","value":"http://localhost:6800/jsonrpc"},{"key":"aria2.rpc.secret","value":""},{"key":"aria2.down.dir","value":"/root/Download"}]' \
         2>/dev/null | grep -q '"code":200' && ok=1
-    # 让下载目录在网页首页可见（挂载为 /downloads）
+    # 让下载目录在网页里可见（挂载为 /downloads）
     curl -s --max-time 10 -X POST "$base/api/admin/storage/create" \
         -H "Authorization: $token" -H 'Content-Type: application/json' \
         -d '{"mount_path":"/downloads","driver":"Local","addition":"{\"root_folder_path\":\"/root/Download\"}"}' \
@@ -105,13 +113,13 @@ do_install() {
     $SUDO $DC up -d || { error "启动失败，查看日志: bash menu.sh logs"; return 1; }
 
     if command -v curl >/dev/null 2>&1; then
-        info "等待 AList 启动..."
+        info "等待服务启动..."
         local up=0
         for _ in $(seq 1 30); do
             if curl -s --connect-timeout 3 -o /dev/null "http://127.0.0.1:${port}"; then up=1; break; fi
             sleep 2
         done
-        [ "$up" = "1" ] || warn "服务 60 秒内未就绪，可能仍在启动，稍后请用菜单 6 查看日志"
+        [ "$up" = "1" ] || warn "服务 60 秒内未就绪，可能仍在启动，稍后请用菜单 7 查看日志"
     fi
 
     echo
@@ -125,10 +133,10 @@ do_install() {
         local admin_pw
         admin_pw=$(gen_secret | cut -c1-16)
         if $SUDO docker exec alist ./alist admin set "$admin_pw" >/dev/null 2>&1; then
-            echo -e "管理员密码: ${CYAN}${admin_pw}${PLAIN}（请截图保存，忘记可用菜单 7→2 重置）"
+            echo -e "管理员密码: ${CYAN}${admin_pw}${PLAIN}（请截图保存，忘记可用菜单 8 重置）"
             info "正在自动配置离线下载..."
             if auto_configure "$admin_pw" "$port"; then
-                info "离线下载已配置好，打开网页就能直接用（剩下的设置全部在网页里完成）"
+                info "离线下载已配置好，打开网页就能直接用"
             else
                 print_manual_config
             fi
@@ -138,7 +146,7 @@ do_install() {
             print_manual_config
         fi
     else
-        echo "管理员密码: 你之前设置的密码（忘记可用菜单 7→2 重置）"
+        echo "管理员密码: 你之前设置的密码（忘记可用菜单 8 重置）"
     fi
     echo
     echo -e "接下来：浏览器打开上面的网址 → 输入 admin 和上面的密码登录"
@@ -195,7 +203,7 @@ do_uninstall() {
     [ "$yn" = "y" ] || [ "$yn" = "Y" ] || { info "已取消"; return 0; }
     $SUDO $DC down
 
-    read -rp "是否删除数据（云盘挂载配置/下载的文件）？(y/N): " yn
+    read -rp "是否删除数据（配置/下载的文件）？(y/N): " yn
     if [ "$yn" = "y" ] || [ "$yn" = "Y" ]; then
         $SUDO rm -rf data downloads .env
         info "数据目录与 .env 已删除"
@@ -205,70 +213,81 @@ do_uninstall() {
 
     read -rp "是否删除 Docker 镜像？(y/N): " yn
     if [ "$yn" = "y" ] || [ "$yn" = "Y" ]; then
-        $SUDO docker image rm xhofe/alist-aria2:latest 2>/dev/null
+        $SUDO docker image rm xhofe/alist-aria2:latest nginx:alpine 2>/dev/null
         info "镜像已删除"
     fi
     info "卸载完成"
 }
 
-config_menu() {
+reset_password() {
     require_compose || return 1
-    while true; do
-        echo
-        echo -e "${CYAN}====== 配置管理 ======${PLAIN}"
-        echo " 1. 重置管理员密码（忘记密码用这个）"
-        echo " 2. 修改访问端口"
-        echo " 0. 返回主菜单"
-        read -rp "请选择: " c
-        case "$c" in
-            1)
-                read -rp "输入新密码: " pw
-                [ -n "$pw" ] || { warn "密码不能为空"; continue; }
-                $SUDO docker exec alist ./alist admin set "$pw" \
-                    && info "密码已重置，用新密码登录网页即可" || error "重置失败"
-                ;;
-            2)
-                read -rp "输入新端口 (1-65535): " port
-                case "$port" in
-                    ''|*[!0-9]*) warn "端口必须是数字"; continue ;;
-                esac
-                [ "$port" -ge 1 ] && [ "$port" -le 65535 ] || { warn "端口范围不合法"; continue; }
-                set_env PORT "$port"
-                $SUDO $DC up -d
-                info "已改为端口 ${port}，请放行安全组后访问 http://VPS公网IP:${port}"
-                ;;
-            0|*) return 0 ;;
-        esac
-    done
+    read -rp "输入新的管理员密码: " pw
+    [ -n "$pw" ] || { warn "密码不能为空"; return 1; }
+    $SUDO docker exec alist ./alist admin set "$pw" \
+        && info "密码已重置，用新密码登录网页即可" || error "重置失败（容器未运行？）"
+}
+
+change_port() {
+    require_compose || return 1
+    read -rp "输入新端口 (1-65535): " port
+    case "$port" in
+        ''|*[!0-9]*) warn "端口必须是数字"; return 1 ;;
+    esac
+    [ "$port" -ge 1 ] && [ "$port" -le 65535 ] || { warn "端口范围不合法"; return 1; }
+    set_env PORT "$port"
+    $SUDO $DC up -d
+    info "已改为端口 ${port}，请放行安全组后访问 http://$(get_ip):${port}"
+}
+
+# ============ 菜单 ============
+
+menu_header() {
+    local installed="未安装" running="服务未运行"
+    if [ -f data/config.db ] || $SUDO docker ps -a --format '{{.Names}}' 2>/dev/null | grep -q '^alist$'; then
+        installed="已安装"
+    fi
+    if $SUDO docker ps --format '{{.Names}}' 2>/dev/null | grep -q '^alist$'; then
+        running="服务运行中"
+    elif [ "$installed" = "已安装" ]; then
+        running="服务已停止"
+    fi
+    echo -e "${CYAN}------------------------------------------------${PLAIN}"
+    echo -e "  ${GREEN}yun 云播放器${PLAIN}  ·  ${installed} · ${running}"
+    echo -e "  面板地址: http://$(get_ip):$(get_port)"
+    echo -e "${CYAN}------------------------------------------------${PLAIN}"
 }
 
 main_menu() {
     while true; do
-        echo
-        echo -e "${CYAN}════════════════════════════════════════${PLAIN}"
-        echo -e "${CYAN}     yun 云播放器管理  (AList + Aria2)${PLAIN}"
-        echo -e "${CYAN}     github.com/a317634186/yun${PLAIN}"
-        echo -e "${CYAN}════════════════════════════════════════${PLAIN}"
-        echo "  1. 安装（全自动，装完显示密码）"
+        command -v clear >/dev/null 2>&1 && clear
+        menu_header
+        echo "  1. 安装"
         echo "  2. 更新"
-        echo "  3. 重启/启动服务"
-        echo "  4. 停止服务"
-        echo "  5. 查看运行状态"
-        echo "  6. 查看日志"
-        echo "  7. 重置密码 / 改端口"
-        echo "  8. 卸载"
+        echo "  3. 卸载"
+        echo "------------------------------------------------"
+        echo "  4. 查看服务状态"
+        echo "  5. 重启服务"
+        echo "  6. 停止服务"
+        echo "  7. 查看日志"
+        echo "------------------------------------------------"
+        echo "  8. 重置管理员密码"
+        echo "  9. 修改访问端口"
+        echo "------------------------------------------------"
         echo "  0. 退出"
-        read -rp "请选择: " c
+        echo "------------------------------------------------"
+        read -rp "请输入你的选择：" c
         case "$c" in
             1) do_install ;;
             2) do_update ;;
-            3) do_restart ;;
-            4) do_stop ;;
-            5) do_status ;;
-            6) do_logs ;;
-            7) config_menu ;;
-            8) do_uninstall ;;
-            0|*) exit 0 ;;
+            3) do_uninstall ;;
+            4) do_status ;;
+            5) do_restart ;;
+            6) do_stop ;;
+            7) do_logs ;;
+            8) reset_password ;;
+            9) change_port ;;
+            0) exit 0 ;;
+            *) warn "无效选择: $c" ;;
         esac
         echo
         read -rp "按回车返回菜单..." _
@@ -282,8 +301,9 @@ case "${1:-menu}" in
     stop)      do_stop ;;
     status)    do_status ;;
     logs)      do_logs ;;
-    config)    config_menu ;;
     uninstall) do_uninstall ;;
+    passwd)    reset_password ;;
+    port)      change_port ;;
     menu)      main_menu ;;
-    *) echo "用法: bash menu.sh [install|update|restart|stop|status|logs|config|uninstall]" ;;
+    *) echo "用法: bash menu.sh [install|update|restart|stop|status|logs|uninstall|passwd|port]" ;;
 esac
