@@ -141,7 +141,8 @@ do_install() {
         echo "管理员密码: 你之前设置的密码（忘记可用菜单 7→2 重置）"
     fi
     echo
-    echo -e "接下来：浏览器打开上面的网址 → 左下角${CYAN}登录${PLAIN} → 后台${CYAN}存储${PLAIN}里添加云盘 → 首页${CYAN}离线下载${PLAIN}提交磁力链接"
+    echo -e "接下来：浏览器打开上面的网址 → 左下角${CYAN}登录${PLAIN} → 首页${CYAN}离线下载${PLAIN}粘贴磁力链接"
+    echo -e "下载完成后在 ${CYAN}downloads${PLAIN} 文件夹里直接点击播放（不需要任何网盘）"
     warn "请确认云厂商安全组已放行 ${port} 端口"
 }
 
