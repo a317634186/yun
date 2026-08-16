@@ -17,8 +17,10 @@
 
 ```bash
 git clone https://github.com/a317634186/yun && cd yun
-bash menu.sh     # 选择 1 安装，完成后显示初始密码
+bash menu.sh     # 选择 1 安装
 ```
+
+安装脚本会自动：安装 Docker（含国内镜像源回退）→ 生成随机 RPC 密钥 → 启动容器 → 设置管理员密码 → **自动配置好 Aria2 离线下载**（失败会打印手动配置步骤）。
 
 在云厂商安全组放行 **5244** 端口后，浏览器打开 `http://VPS公网IP:5244` 即可使用。
 
@@ -43,9 +45,14 @@ bash menu.sh     # 选择 1 安装，完成后显示初始密码
 yun/
 ├── menu.sh               # 管理菜单（安装/更新/卸载/配置/日志）
 ├── docker-compose.yml    # AList + Aria2 一体容器编排
-├── .env                  # RPC 密钥（安装时自动生成随机值）
+├── .env.example          # 配置模板（端口、RPC 密钥）
+├── .env                  # 实际配置，安装时自动生成，不入库（已 gitignore）
+├── data/                 # AList 数据库与配置（运行时生成）
+├── downloads/            # 离线下载临时目录（运行时生成）
 └── README.md
 ```
+
+> 所有本地配置（端口、RPC 密钥）都写在 `.env` 中，`git pull` 更新时不会产生冲突。
 
 ---
 
@@ -61,13 +68,14 @@ bash menu.sh
 会显示文本菜单，按数字选择即可：
 
 ```
-  1. 安装（首次部署）      ← 自动装 Docker、生成随机密钥、启动并显示初始密码
+  1. 安装（首次部署）      ← 自动装 Docker、生成密钥、启动、自动配置离线下载
   2. 更新（拉取最新版并重启）
-  3. 重启服务
-  4. 查看运行状态
-  5. 查看日志
-  6. 配置管理（密码/密钥/端口）
-  7. 卸载
+  3. 重启/启动服务
+  4. 停止服务
+  5. 查看运行状态
+  6. 查看日志
+  7. 配置管理（密码/密钥/端口）
+  8. 卸载
   0. 退出
 ```
 
@@ -79,7 +87,7 @@ bash menu.sh
 
 ```bash
 git clone https://github.com/a317634186/yun && cd yun
-vim .env                # 修改 ARIA2_RPC_SECRET 为随机字符串
+cp .env.example .env    # 可选：修改 ARIA2_RPC_SECRET / PORT
 docker compose up -d
 docker exec alist ./alist admin   # 查看管理员初始密码
 docker exec alist ./alist admin set 你的新密码   #（可选）修改密码
@@ -112,11 +120,11 @@ docker exec alist ./alist admin set 你的新密码   #（可选）修改密码
 
 ## 三、配置离线下载（Aria2）
 
-镜像已内置 Aria2，只需在 AList 后台填 RPC 信息：
+用 `bash menu.sh` 安装的，脚本会**自动完成本节配置**（通过 AList API 写入），无需手动操作；只有自动配置失败时才需要按下面步骤手动填一次：
 
 1. **管理 → 设置 → 离线下载**：
    - Aria2 RPC 地址：`http://127.0.0.1:6800/jsonrpc`（同容器内）
-   - Aria2 RPC 密钥：`.env` 里你设置的 `ARIA2_RPC_SECRET`（用菜单脚本安装的，在 `.env` 文件中查看）
+   - Aria2 RPC 密钥：`.env` 里的 `ARIA2_RPC_SECRET`（手动安装的请自己设置一个）
    - 下载目录：`/opt/aria2/downloads`
 2. 保存后，网页主界面点右上角 **更多 → 离线下载**，粘贴磁力链接（`magnet:?xt=...`）或 .torrent 文件链接即可开始下载。
 
@@ -151,7 +159,7 @@ docker exec alist ./alist admin set 你的新密码   #（可选）修改密码
 
 | 问题 | 处理 |
 |---|---|
-| 打不开网页 | 检查安全组 5244 端口；`bash menu.sh` 选 5 看日志 |
+| 打不开网页 | 检查安全组 5244 端口；`bash menu.sh` 选 6 看日志 |
 | 磁力下载没速度 | 种子冷门或 VPS 出口被限，属正常；换热门种子测试 |
 | aria2 连不上 | 确认后台 RPC 密钥与 `.env` 一致；改完后 `bash menu.sh` 选 3 重启 |
 | 云盘挂载失败 | OneDrive/Google token 过期，进存储编辑页重新获取 refresh token |

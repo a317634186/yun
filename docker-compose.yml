@@ -4,7 +4,7 @@ services:
     container_name: alist
     restart: always
     ports:
-      - "5244:5244"
+      - "${PORT:-5244}:5244"   # 对外端口在 .env 的 PORT 中修改
       # aria2 与 AList 同容器，RPC 走内部 localhost，不对公网暴露
     environment:
       - TZ=Asia/Shanghai
