@@ -1,17 +1,15 @@
 services:
   alist:
-    image: alicion/alist-aria2:latest
+    image: xhofe/alist-aria2:latest   # AList 官方 + Aria2 一体镜像（内置高速下载配置）
     container_name: alist
     restart: always
     ports:
-      - "${PORT:-5244}:5244"   # 对外端口在 .env 的 PORT 中修改
-      # aria2 与 AList 同容器，RPC 走内部 localhost，不对公网暴露
+      - "${PORT:-5244}:5244"          # 对外端口在 .env 的 PORT 中修改
     environment:
       - TZ=Asia/Shanghai
-      - ARIA2_RPC_SECRET=${ARIA2_RPC_SECRET:-alistaria2secret}
-      # 下载临时目录（VPS 本地磁盘），下载完成后在网页里转存到云盘
-      - ARIA2_RPC_DIR=/opt/aria2/downloads
+      - PUID=0
+      - PGID=0
+      - UMASK=022
     volumes:
-      - ./data:/opt/alist/data          # AList 数据库与配置
-      - ./aria2-config:/opt/aria2/conf  # aria2 配置
-      - ./downloads:/opt/aria2/downloads # 离线下载临时目录
+      - ./data:/opt/alist/data        # AList 数据（配置数据库、云盘挂载记录）
+      - ./downloads:/root/Download    # 离线下载目录（aria2 默认下载路径）
