@@ -1,0 +1,320 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>yun · 云播放器</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:#0e1420;color:#dbe4f0;font:15px/1.6 system-ui,"Microsoft YaHei",sans-serif}
+header{display:flex;justify-content:space-between;align-items:center;padding:14px 20px;background:#121a2a;border-bottom:1px solid #1f2a3f}
+.logo{font-size:18px;font-weight:700}
+.logo span{color:#4f8cff}
+main{max-width:960px;margin:0 auto;padding:20px 16px 60px}
+.card{background:#151d2e;border:1px solid #1f2a3f;border-radius:12px;padding:20px}
+.hidden{display:none!important}
+/* 登录 */
+#login-view{max-width:360px;margin:10vh auto 0}
+#login-view h2{font-size:16px;margin-bottom:14px;font-weight:600}
+input,button{font:inherit}
+input[type=text],input[type=password]{width:100%;padding:10px 12px;border-radius:8px;border:1px solid #2a3852;background:#0e1420;color:#dbe4f0;outline:none}
+input:focus{border-color:#4f8cff}
+button{cursor:pointer;border:none;border-radius:8px;padding:10px 16px;background:#243350;color:#dbe4f0}
+button:hover{background:#2d4166}
+button.primary{background:#4f8cff;color:#fff}
+button.primary:hover{background:#6ba1ff}
+button.mini{padding:4px 10px;font-size:12px;border-radius:6px}
+.err{color:#ff7a7a;font-size:13px;margin-top:10px;min-height:18px}
+/* 输入行 */
+.inputrow{display:flex;gap:10px;margin-bottom:16px}
+.inputrow input{flex:1}
+/* 播放器 */
+.playerbox{background:#000;border-radius:12px;overflow:hidden;border:1px solid #1f2a3f}
+.playerbox video{width:100%;aspect-ratio:16/9;display:block;background:#000}
+.ptip{display:flex;align-items:center;justify-content:center;aspect-ratio:16/9;color:#5a6b8c;flex-direction:column;gap:8px}
+.ptip .big{font-size:40px}
+/* 标签页 */
+.tabs{display:flex;gap:8px;margin:18px 0 12px}
+.tabs button{background:transparent;color:#8ea2c4;padding:6px 14px}
+.tabs button.active{background:#243350;color:#fff}
+/* 列表 */
+.item{display:flex;align-items:center;gap:12px;padding:10px 12px;border-radius:10px;background:#151d2e;border:1px solid #1f2a3f;margin-bottom:8px}
+.item:hover{border-color:#33456b}
+.item .name{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer}
+.item .name:hover{color:#6ba1ff}
+.item .meta{color:#7c8dab;font-size:12px;white-space:nowrap}
+.item .bar{flex:1;height:6px;border-radius:3px;background:#1f2a3f;overflow:hidden}
+.item .bar i{display:block;height:100%;background:#4f8cff;border-radius:3px;transition:width .5s}
+.item .acts{display:flex;gap:6px}
+.empty{color:#5a6b8c;text-align:center;padding:26px 0;font-size:14px}
+.toast{position:fixed;left:50%;transform:translateX(-50%);bottom:28px;background:#243350;border:1px solid #33456b;color:#dbe4f0;padding:10px 18px;border-radius:10px;opacity:0;transition:opacity .3s;pointer-events:none;z-index:9}
+.toast.show{opacity:1}
+h3.sec{font-size:13px;color:#7c8dab;margin:16px 0 8px;font-weight:600}
+</style>
+</head>
+<body>
+<header>
+  <div class="logo">☁ <span>yun</span> 云播放器</div>
+  <div id="userbar" class="meta" style="color:#7c8dab"></div>
+</header>
+<main>
+  <!-- 登录 -->
+  <section id="login-view" class="card hidden">
+    <h2>登录</h2>
+    <div style="margin-bottom:12px"><input type="text" id="in-user" value="admin" placeholder="用户名"></div>
+    <div style="margin-bottom:14px"><input type="password" id="in-pass" placeholder="密码（安装时屏幕显示的密码）"></div>
+    <button class="primary" style="width:100%" id="btn-login">登 录</button>
+    <div class="err" id="login-err"></div>
+  </section>
+
+  <!-- 主界面 -->
+  <section id="app-view" class="hidden">
+    <div class="inputrow">
+      <input type="text" id="in-magnet" placeholder="粘贴磁力链接（magnet:?xt=...）或 .torrent 文件下载链接">
+      <button class="primary" id="btn-add">添加下载</button>
+    </div>
+
+    <div class="playerbox">
+      <video id="video" controls preload="metadata" class="hidden"></video>
+      <div class="ptip" id="player-tip"><div class="big">🎬</div><div>下载完成后点击下方文件即可播放</div></div>
+    </div>
+
+    <div class="tabs">
+      <button data-tab="tasks" class="active">下载列表</button>
+      <button data-tab="history">播放记录</button>
+    </div>
+
+    <div id="tasks-view">
+      <div id="task-list"></div>
+      <h3 class="sec">已完成文件（点击播放）</h3>
+      <div id="file-list"></div>
+    </div>
+
+    <div id="history-view" class="hidden">
+      <div id="history-list"></div>
+    </div>
+  </section>
+</main>
+<div class="toast" id="toast"></div>
+
+<script>
+'use strict';
+var DL = '/downloads';                      // 下载目录（AList 挂载路径）
+var VIDEO_RE = /\.(mp4|mkv|webm|avi|mov|ts|flv|m2ts|wmv|mpg|mpeg|iso)$/i;
+var token = localStorage.getItem('yun_token') || '';
+var auth = null;
+try { auth = JSON.parse(localStorage.getItem('yun_auth') || 'null'); } catch(e){}
+var hist = {};
+try { hist = JSON.parse(localStorage.getItem('yun_hist') || '{}'); } catch(e){}
+
+function esc(s){ var d=document.createElement('div'); d.textContent=s==null?'':String(s); return d.innerHTML; }
+function fmtSize(n){ n=+n||0; if(n<1024) return n+'B'; var u=['KB','MB','GB','TB'],i=-1; do{n/=1024;i++}while(n>=1024&&i<3); return n.toFixed(1)+u[i]; }
+function fmtTime(s){ s=Math.floor(+s||0); var h=Math.floor(s/3600),m=Math.floor(s%3600/60),x=s%60; return (h?h+':':'')+(h&&m<10?'0':'')+m+':'+(x<10?'0':'')+x; }
+function fmtDate(ts){ var d=new Date(ts); return (d.getMonth()+1)+'-'+d.getDate()+' '+String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0'); }
+var toastTimer;
+function toast(msg){ var t=document.getElementById('toast'); t.textContent=msg; t.classList.add('show'); clearTimeout(toastTimer); toastTimer=setTimeout(function(){t.classList.remove('show')},2500); }
+
+/* ---------- API ---------- */
+function api(path, body, retry){
+  var opt = {method: body ? 'POST' : 'GET', headers:{'Content-Type':'application/json'}};
+  if (token) opt.headers.Authorization = token;
+  if (body) opt.body = JSON.stringify(body);
+  return fetch('/api' + path, opt).then(function(r){ return r.json(); }).catch(function(){ return {code:600, message:'网络错误'}; })
+    .then(function(j){
+      if (j.code === 401 && auth && !retry) return doLogin(auth.u, auth.p, true).then(function(){ return api(path, body, true); });
+      return j;
+    });
+}
+function doLogin(u, p, silent){
+  return fetch('/api/auth/login', {method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({username:u, password:p})})
+    .then(function(r){ return r.json(); })
+    .then(function(j){
+      if (j.code !== 200) throw new Error(j.message || '登录失败');
+      token = j.data.token;
+      localStorage.setItem('yun_token', token);
+      auth = {u:u, p:p};
+      localStorage.setItem('yun_auth', JSON.stringify(auth));
+      return j;
+    });
+}
+
+/* ---------- 视图切换 ---------- */
+function show(loginMode){
+  document.getElementById('login-view').classList.toggle('hidden', !loginMode);
+  document.getElementById('app-view').classList.toggle('hidden', loginMode);
+}
+
+/* ---------- 登录 ---------- */
+function loginClick(){
+  var u = document.getElementById('in-user').value.trim() || 'admin';
+  var p = document.getElementById('in-pass').value;
+  doLogin(u, p).then(function(){
+    document.getElementById('login-err').textContent = '';
+    enterApp();
+  }).catch(function(e){ document.getElementById('login-err').textContent = '登录失败：' + (e.message||'密码错误'); });
+}
+function enterApp(){
+  show(false);
+  document.getElementById('userbar').innerHTML = esc(auth.u) + ' · <a href="#" id="lnk-logout" style="color:#7c8dab">退出</a>';
+  document.getElementById('lnk-logout').onclick = function(){ localStorage.removeItem('yun_token'); localStorage.removeItem('yun_auth'); location.reload(); return false; };
+  refreshTasks(); refreshFiles(); renderHistory();
+}
+
+/* ---------- 添加下载 ---------- */
+function addDownload(){
+  var el = document.getElementById('in-magnet');
+  var url = el.value.trim();
+  if (!url) { toast('请先粘贴链接'); return; }
+  api('/fs/offline_download', {urls:[url], path:DL}).then(function(j){
+    if (j.code === 200) { el.value=''; toast('已添加，开始下载'); refreshTasks(); }
+    else toast('添加失败：' + (j.message||'链接不合法'));
+  });
+}
+
+/* ---------- 下载任务/文件列表 ---------- */
+var lastTasks = [];
+function refreshTasks(){
+  Promise.all([api('/admin/task/aria2/undone'), api('/admin/task/aria2/done')]).then(function(rs){
+    lastTasks = [];
+    (rs[0].data||[]).forEach(function(t){ lastTasks.push(t); });
+    renderTasks();
+    (rs[1].data||[]).forEach(function(t){ /* 完成任务由文件列表展示 */ });
+    setTimeout(refreshFiles, 50);
+  });
+}
+function renderTasks(){
+  var box = document.getElementById('task-list');
+  if (!lastTasks.length) { box.innerHTML = '<div class="empty">暂无下载任务，粘贴链接开始</div>'; return; }
+  var h = '';
+  lastTasks.forEach(function(t, i){
+    var prog = Math.round((t.progress>1 ? t.progress : t.progress*100) || 0);
+    h += '<div class="item"><div style="width:22px;text-align:center">⬇️</div>'
+       + '<div style="flex:1;min-width:0"><div class="name" title="'+esc(t.name)+'">'+esc(t.name)+'</div>'
+       + '<div class="bar" style="margin-top:6px"><i style="width:'+prog+'%"></i></div></div>'
+       + '<div class="meta">'+prog+'%</div></div>';
+  });
+  box.innerHTML = h;
+}
+function refreshFiles(){
+  api('/fs/list', {path:DL, page:1, per_page:200, refresh:false}).then(function(j){
+    var box = document.getElementById('file-list');
+    if (j.code !== 200) { box.innerHTML = '<div class="empty">'+esc(j.message||'读取失败')+'</div>'; return; }
+    var files = (j.data.content||[]).filter(function(f){ return !f.is_dir && VIDEO_RE.test(f.name); });
+    var dirs  = (j.data.content||[]).filter(function(f){ return f.is_dir; });
+    if (!files.length && !dirs.length) { box.innerHTML = '<div class="empty">还没有文件</div>'; return; }
+    var h = '';
+    files.sort(function(a,b){ return b.modified==a.modified ? 0 : (b.modified>a.modified?1:-1); }).forEach(function(f){
+      var p = DL + '/' + f.name;
+      var hc = hist[p];
+      var meta = fmtSize(f.size);
+      if (hc && hc.pos > 10 && hc.pos < hc.dur*0.95) meta += ' · 已看 ' + fmtTime(hc.pos);
+      h += '<div class="item"><div style="width:22px;text-align:center">'+(hc&&hc.pos>hc.dur*0.95?'✅':'🎞️')+'</div>'
+         + '<div class="name" data-play="'+esc(p)+'">'+esc(f.name)+'</div><div class="meta">'+meta+'</div>'
+         + '<div class="acts"><button class="mini" data-del="'+esc(f.name)+'">删除</button></div></div>';
+    });
+    dirs.forEach(function(f){
+      h += '<div class="item"><div style="width:22px;text-align:center">📁</div>'
+         + '<div class="name" style="color:#8ea2c4">📁 '+esc(f.name)+'（多文件文件夹）</div></div>';
+    });
+    box.innerHTML = h;
+    box.querySelectorAll('[data-play]').forEach(function(n){ n.onclick = function(){ play(n.getAttribute('data-play'), null); }; });
+    box.querySelectorAll('[data-del]').forEach(function(n){ n.onclick = function(){ delFile(n.getAttribute('data-del')); }; });
+  });
+}
+function delFile(name){
+  if (!confirm('删除文件：' + name + ' ？')) return;
+  api('/fs/remove', {dir:DL, names:[name]}).then(function(j){
+    toast(j.code===200 ? '已删除' : '删除失败：'+(j.message||'')); refreshFiles();
+  });
+}
+
+/* ---------- 播放 ---------- */
+var video = document.getElementById('video');
+function play(path, resume){
+  api('/fs/get', {path:path}).then(function(j){
+    if (j.code !== 200) { toast('无法播放：'+(j.message||'文件不存在')); return; }
+    var d = j.data;
+    if (d.is_dir) { toast('这是一个文件夹，请播放其中的视频文件'); return; }
+    var src = d.raw_url && /^https?:/.test(d.raw_url) ? d.raw_url : ('/d' + path + (d.sign ? '?sign='+encodeURIComponent(d.sign) : ''));
+    document.getElementById('player-tip').classList.add('hidden');
+    video.classList.remove('hidden');
+    video.src = src;
+    var hc = hist[path];
+    if (resume == null) resume = (hc && hc.pos > 10 && hc.pos < hc.dur*0.95) ? hc.pos : 0;
+    video.addEventListener('loadedmetadata', function(){ if (resume>0) video.currentTime = resume; }, {once:true});
+    video.play().catch(function(){});
+    video.scrollIntoView({behavior:'smooth', block:'start'});
+  });
+}
+video.addEventListener('timeupdate', function(){
+  var p = currentPath(); if (!p) return;
+  if (!hist[p]) hist[p] = {pos:0, dur:0, ts:0};
+  hist[p].pos = video.currentTime; hist[p].dur = video.duration || hist[p].dur; hist[p].ts = Date.now();
+  saveHistSoon();
+});
+video.addEventListener('ended', function(){ var p=currentPath(); if(p&&hist[p]){ hist[p].pos=hist[p].dur||hist[p].pos; saveHist(); } });
+window.addEventListener('beforeunload', saveHist);
+var currentPlayPath = null;
+function currentPath(){ return currentPlayPath; }
+var _origPlay = play;
+play = function(p, r){ currentPlayPath = p; _origPlay(p, r); };
+
+var saveTimer;
+function saveHistSoon(){ clearTimeout(saveTimer); saveTimer = setTimeout(saveHist, 4000); }
+function saveHist(){ localStorage.setItem('yun_hist', JSON.stringify(hist)); }
+
+/* ---------- 播放记录 ---------- */
+function renderHistory(){
+  var box = document.getElementById('history-list');
+  var list = Object.keys(hist).map(function(p){ return Object.assign({path:p}, hist[p]); })
+    .filter(function(h){ return h.ts; }).sort(function(a,b){ return b.ts-a.ts; });
+  if (!list.length) { box.innerHTML = '<div class="empty">暂无播放记录</div>'; return; }
+  var h = '';
+  list.forEach(function(it){
+    var pct = it.dur ? Math.min(100, Math.round(it.pos/it.dur*100)) : 0;
+    var name = it.path.split('/').pop();
+    h += '<div class="item"><div style="width:22px;text-align:center">'+(pct>=95?'✅':'⏱️')+'</div>'
+       + '<div style="flex:1;min-width:0"><div class="name" data-play2="'+esc(it.path)+'">'+esc(name)+'</div>'
+       + '<div class="bar" style="margin-top:6px"><i style="width:'+pct+'%"></i></div></div>'
+       + '<div class="meta">'+fmtDate(it.ts)+'<br>'+fmtTime(it.pos)+' / '+fmtTime(it.dur)+'</div>'
+       + '<div class="acts"><button class="mini" data-play2btn="'+esc(it.path)+'">'+(pct>=95?'重播':'继续')+'</button>'
+       + '<button class="mini" data-rmhist="'+esc(it.path)+'">移除</button></div></div>';
+  });
+  box.innerHTML = h;
+  box.querySelectorAll('[data-play2]').forEach(function(n){ n.onclick=function(){ play(n.getAttribute('data-play2')); switchTab('tasks'); }; });
+  box.querySelectorAll('[data-play2btn]').forEach(function(n){ n.onclick=function(){ play(n.getAttribute('data-play2btn')); switchTab('tasks'); }; });
+  box.querySelectorAll('[data-rmhist]').forEach(function(n){ n.onclick=function(){ delete hist[n.getAttribute('data-rmhist')]; saveHist(); renderHistory(); }; });
+}
+
+/* ---------- 标签页 ---------- */
+function switchTab(name){
+  document.querySelectorAll('.tabs button').forEach(function(b){ b.classList.toggle('active', b.dataset.tab===name); });
+  document.getElementById('tasks-view').classList.toggle('hidden', name!=='tasks');
+  document.getElementById('history-view').classList.toggle('hidden', name!=='history');
+}
+document.querySelectorAll('.tabs button').forEach(function(b){ b.onclick=function(){ switchTab(b.dataset.tab); if(b.dataset.tab==='history') renderHistory(); }; });
+
+/* ---------- 启动 ---------- */
+document.getElementById('btn-login').onclick = loginClick;
+document.getElementById('in-pass').addEventListener('keydown', function(e){ if(e.key==='Enter') loginClick(); });
+document.getElementById('btn-add').onclick = addDownload;
+document.getElementById('in-magnet').addEventListener('keydown', function(e){ if(e.key==='Enter') addDownload(); });
+
+(function boot(){
+  if (token && auth) {
+    api('/me').then(function(j){
+      if (j.code === 200) enterApp();
+      else if (auth) doLogin(auth.u, auth.p, true).then(enterApp).catch(function(){ show(true); });
+      else show(true);
+    });
+  } else show(true);
+})();
+
+/* 定时刷新下载进度 */
+setInterval(function(){
+  if (token && !document.hidden && !document.getElementById('app-view').classList.contains('hidden')) refreshTasks();
+}, 3000);
+</script>
+</body>
+</html>

@@ -3,13 +3,25 @@ services:
     image: xhofe/alist-aria2:latest   # AList 官方 + Aria2 一体镜像（内置高速下载配置）
     container_name: alist
     restart: always
-    ports:
-      - "${PORT:-5244}:5244"          # 对外端口在 .env 的 PORT 中修改
     environment:
       - TZ=Asia/Shanghai
       - PUID=0
       - PGID=0
       - UMASK=022
     volumes:
-      - ./data:/opt/alist/data        # AList 数据（配置数据库、云盘挂载记录）
+      - ./data:/opt/alist/data        # AList 数据（配置数据库）
       - ./downloads:/root/Download    # 离线下载目录（aria2 默认下载路径）
+    expose:
+      - "5244"                        # 仅内部访问，由前端容器反代
+
+  web:
+    image: nginx:alpine                # 播放器前端页面 + 反向代理
+    container_name: yun-web
+    restart: always
+    ports:
+      - "${PORT:-5244}:80"            # 对外端口在 .env 的 PORT 中修改
+    volumes:
+      - ./web:/usr/share/nginx/html:ro
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      - alist
