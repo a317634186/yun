@@ -166,7 +166,7 @@ function addDownload(){
   var el = document.getElementById('in-magnet');
   var url = el.value.trim();
   if (!url) { toast('请先粘贴链接'); return; }
-  api('/fs/offline_download', {urls:[url], path:DL}).then(function(j){
+  api('/fs/add_offline_download', {urls:[url], path:DL, tool:'aria2', delete_policy:'delete_never'}).then(function(j){
     if (j.code === 200) { el.value=''; toast('已添加，开始下载'); refreshTasks(); }
     else toast('添加失败：' + (j.message||'链接不合法'));
   });

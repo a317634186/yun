@@ -74,10 +74,10 @@ auto_configure() {
         -d "{\"username\":\"admin\",\"password\":\"$1\"}" 2>/dev/null \
         | sed -n 's/.*"token":"\([^"]*\)".*/\1/p')
     [ -n "$token" ] || return 1
-    # 离线下载（Aria2）设置：镜像内置 aria2 无需密钥
+    # 离线下载（Aria2）设置：键名为 aria2_uri / aria2_secret，镜像内置 aria2 无需密钥
     curl -s --max-time 10 -X PUT "$base/api/admin/setting/list" \
         -H "Authorization: $token" -H 'Content-Type: application/json' \
-        -d '[{"key":"aria2.rpc.url","value":"http://localhost:6800/jsonrpc"},{"key":"aria2.rpc.secret","value":""},{"key":"aria2.down.dir","value":"/root/Download"}]' \
+        -d '[{"key":"aria2_uri","value":"http://localhost:6800/jsonrpc"},{"key":"aria2_secret","value":""}]' \
         2>/dev/null | grep -q '"code":200' && ok=1
     # 让下载目录在网页里可见（挂载为 /downloads）
     curl -s --max-time 10 -X POST "$base/api/admin/storage/create" \
