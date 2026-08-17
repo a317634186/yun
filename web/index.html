@@ -187,6 +187,11 @@ function refreshTasks(){
       .concat((rs[1].data||[]).map(function(t){ t._stage='已完成'; return t; }));
     lastRaw = tasks;
     tasks.forEach(function(t){ taskMap[t.id] = t; });
+    // 自动扫描：无文件缓存的任务立即扫；下载中的任务每 15 秒重扫（发现新视频）
+    tasks.forEach(function(t){
+      if (!taskFiles[t.id] || (!taskFiles[t.id].length && Date.now()-(scanTs[t.id]||0) > 15000)) assignFiles(t.id);
+      else if (t._stage !== '已完成' && Date.now()-(scanTs[t.id]||0) > 15000) assignFiles(t.id);
+    });
     renderTasks();
   });
 }
@@ -202,6 +207,7 @@ function renderTasks(){
     var done = t._stage === '已完成';
     var name = taskName(t);
     var hasFiles = taskFiles[t.id] && taskFiles[t.id].length;
+    var openState = hasFiles && taskFiles[t.id]._open;
     h += '<div class="task" data-tid="'+esc(t.id)+'">'
       + '<div class="task-head">'
       + '<div class="ico">'+(done?'✅':(t.error?'❌':'⬇️'))+'</div>'
@@ -209,8 +215,7 @@ function renderTasks(){
       + '<div class="bar-wrap"><div class="bar"><i style="width:'+prog+'%"></i></div></div>'
       + '<div class="pct">'+(done?'100%':prog+'%')+'</div>'
       + '<div class="acts">';
-    if (hasFiles) h += '<button class="folder-btn'+(taskFiles[t.id]._open?' open':'')+'" data-folder="'+esc(t.id)+'">'+(taskFiles[t.id]._open?'收起':'展开文件')+'</button>';
-    else if (!done) h += '<button class="folder-btn" data-folder="'+esc(t.id)+'">扫描文件</button>';
+    h += '<button class="folder-btn'+(openState?' open':'')+'" data-folder="'+esc(t.id)+'">'+(openState?'收起':'展开文件')+'</button>';
     h += '<button class="del-btn" data-deltask="'+esc(t.id)+'" title="删除该任务及文件">🗑</button>';
     h += '</div></div>';
     if (hasFiles && taskFiles[t.id]._open) {
@@ -271,50 +276,62 @@ function delTask(tid){
 }
 
 /* ===== 展开/扫描文件 ===== */
-function toggleFolder(tid){
-  if (taskFiles[tid] && taskFiles[tid]._open) {
-    taskFiles[tid]._open = false;
-    renderTasks();
-    return;
-  }
-  // find matching subdir in downloads
+var scanTs = {};   // tid -> last scan time (throttle)
+function collectVideos(cb){
   api('/fs/list', {path:DL, page:1, per_page:200, refresh:false}).then(function(j){
-    if (j.code !== 200) return;
-    var tname = taskName(taskMap[tid] || {});
+    if (j.code !== 200) return cb(null);
     var items = j.data.content || [];
     var dirs = items.filter(function(f){ return f.is_dir; });
-    var files = items.filter(function(f){ return !f.is_dir && VIDEO_RE.test(f.name); });
-    // try to find a directory matching task name
-    var targetDir = null;
+    var rootVids = items.filter(function(f){ return !f.is_dir && VIDEO_RE.test(f.name); })
+      .map(function(f){ return {name:f.name, path:DL+'/'+f.name, size:f.size}; });
+    if (!dirs.length) return cb({root:rootVids, dirs:{}});
+    var pending = dirs.length, dirMap = {};
     dirs.forEach(function(d){
-      if (d.name.toLowerCase().indexOf(tname.toLowerCase()) > -1 || tname.toLowerCase().indexOf(d.name.toLowerCase()) > -1) targetDir = d.name;
-    });
-    // if only one dir and no files, use that dir
-    if (!targetDir && dirs.length === 1 && !files.length) targetDir = dirs[0].name;
-    // if task name looks like a video file, it might be a direct download
-    if (!targetDir && VIDEO_RE.test(tname)) {
-      var found = items.find(function(f){ return !f.is_dir && f.name === tname; });
-      if (found) targetDir = '__direct__';
-    }
-    if (targetDir && targetDir !== '__direct__') {
-      // list files in subdir
-      api('/fs/list', {path: DL+'/'+targetDir, page:1, per_page:200, refresh:false}).then(function(j2){
-        if (j2.code !== 200) return;
-        var vids = (j2.data.content||[]).filter(function(f){ return !f.is_dir && VIDEO_RE.test(f.name); });
-        taskFiles[tid] = vids.map(function(f){ return {name:f.name, path:DL+'/'+targetDir+'/'+f.name, size:f.size}; });
-        taskFiles[tid]._open = true;
-        renderTasks();
-        renderFileList();
+      api('/fs/list', {path:DL+'/'+d.name, page:1, per_page:200, refresh:false}).then(function(j2){
+        dirMap[d.name] = (j2.code===200 ? (j2.data.content||[]) : [])
+          .filter(function(f){ return !f.is_dir && VIDEO_RE.test(f.name); })
+          .map(function(f){ return {name:f.name, path:DL+'/'+d.name+'/'+f.name, size:f.size}; });
+        if (--pending === 0) cb({root:rootVids, dirs:dirMap});
       });
-    } else {
-      // single file torrent or files in root
-      var vids = files;
-      taskFiles[tid] = vids.map(function(f){ return {name:f.name, path:DL+'/'+f.name, size:f.size}; });
-      taskFiles[tid]._open = true;
-      renderTasks();
-      renderFileList();
-    }
+    });
   });
+}
+function assignFiles(tid){
+  scanTs[tid] = Date.now();
+  var tname = taskName(taskMap[tid] || {});
+  collectVideos(function(res){
+    if (!res) return;
+    var files = null;
+    // 1. 子目录名与任务名匹配
+    Object.keys(res.dirs).forEach(function(dn){
+      if (files && files.length) return;
+      var a = dn.toLowerCase(), b = tname.toLowerCase();
+      if ((b && (a.indexOf(b)>-1 || b.indexOf(a)>-1)) && res.dirs[dn].length) files = res.dirs[dn];
+    });
+    // 2. 任务名本身就是根目录下的视频文件
+    if (!files || !files.length) {
+      var m = res.root.filter(function(f){ return f.name === tname; });
+      if (m.length) files = m;
+    }
+    // 3. 只有一个含视频的子目录 → 就是它
+    if (!files || !files.length) {
+      var dv = Object.keys(res.dirs).filter(function(dn){ return res.dirs[dn].length; });
+      if (dv.length === 1) files = res.dirs[dv[0]];
+    }
+    // 4. 兜底：根目录视频，否则列出全部视频
+    if (!files || !files.length) files = res.root.length ? res.root : Object.keys(res.dirs).reduce(function(acc,dn){ return acc.concat(res.dirs[dn]); }, []);
+    if (!files || !files.length) return; // 还没有视频出现，下次刷新再试
+    var wasOpen = taskFiles[tid] ? taskFiles[tid]._open : true;
+    taskFiles[tid] = files;
+    taskFiles[tid]._open = wasOpen;
+    renderTasks();
+    renderFileList();
+  });
+}
+function toggleFolder(tid){
+  if (taskFiles[tid] && taskFiles[tid]._open) { taskFiles[tid]._open = false; renderTasks(); return; }
+  if (taskFiles[tid] && taskFiles[tid].length) { taskFiles[tid]._open = true; renderTasks(); return; }
+  assignFiles(tid);
 }
 
 /* ===== 已完成文件列表（底部） ===== */
@@ -373,9 +390,9 @@ var video = document.getElementById('video');
 function play(path, resume){
   currentPlayPath = path;
   renderTasks(); // update "播放中" labels
-  // construct direct stream URL via nginx proxy
+  // construct direct stream URL via nginx proxy (encode each segment for 中文/空格/#)
   // path is like /downloads/filename.mp4 or /downloads/subdir/filename.mp4
-  var src = '/d' + path;
+  var src = '/d' + path.split('/').map(encodeURIComponent).join('/');
   document.getElementById('player-tip').classList.add('hidden');
   video.classList.remove('hidden');
   video.src = src;
@@ -393,7 +410,7 @@ video.addEventListener('timeupdate', function(){
   saveHistSoon();
 });
 video.addEventListener('ended', function(){ var p=currentPlayPath; if(p&&hist[p]){ hist[p].pos=hist[p].dur||hist[p].pos; saveHist(); } });
-video.addEventListener('error', function(){ toast('视频加载失败：文件可能已被自动清理（保留 1 小时）或格式不支持'); });
+video.addEventListener('error', function(){ toast('视频加载失败：可能尚未下载到足够数据（稍后再试）、已被自动清理（保留 1 小时）或格式浏览器不支持'); });
 window.addEventListener('beforeunload', saveHist);
 var saveTimer;
 function saveHistSoon(){ clearTimeout(saveTimer); saveTimer = setTimeout(saveHist, 4000); }
