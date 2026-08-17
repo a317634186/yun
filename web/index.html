@@ -26,6 +26,9 @@ button.play-btn:hover{background:#22883a}
 button.folder-btn{background:#243350;color:#8ea2c4;padding:5px 10px;font-size:12px;border-radius:6px;white-space:nowrap}
 button.folder-btn:hover{background:#2d4166}
 button.folder-btn.open{background:#2a4a6b;color:#4f8cff}
+button.del-btn{background:#3a1a1a;color:#ff7a7a;padding:5px 10px;font-size:12px;border-radius:6px;white-space:nowrap}
+button.del-btn:hover{background:#5a2020}
+.timer-bar{font-size:11px;color:#7c8dab;margin-top:4px}
 .err{color:#ff7a7a;font-size:13px;margin-top:10px;min-height:18px}
 .inputrow{display:flex;gap:10px;margin-bottom:16px;align-items:center;flex-wrap:wrap}
 .inputrow input{flex:1;min-width:200px}
@@ -112,6 +115,12 @@ function esc(s){ var d=document.createElement('div'); d.textContent=s==null?'':S
 function fmtSize(n){ n=+n||0; if(n<1024) return n+'B'; var u=['KB','MB','GB','TB'],i=-1; do{n/=1024;i++}while(n>=1024&&i<3); return n.toFixed(1)+u[i]; }
 function fmtTime(s){ s=Math.floor(+s||0); var h=Math.floor(s/3600),m=Math.floor(s%3600/60),x=s%60; return (h?h+':':'')+(h&&m<10?'0':'')+m+':'+(x<10?'0':'')+x; }
 function fmtDate(ts){ var d=new Date(ts); return (d.getMonth()+1)+'-'+d.getDate()+' '+String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0'); }
+function fileDate(f){ var m=f&&f.modified; if(!m) return new Date(); if(typeof m==='number') return new Date(m*1000); var d=new Date(m); return isNaN(+d)?new Date():d; }
+function remainText(f){
+  var remain = 60 - Math.floor((Date.now()-fileDate(f))/60000);
+  if (remain <= 1) return '即将清理';
+  return '⏳剩'+remain+'分';
+}
 var toastTimer;
 function toast(msg){ var t=document.getElementById('toast'); t.textContent=msg; t.classList.add('show'); clearTimeout(toastTimer); toastTimer=setTimeout(function(){t.classList.remove('show')},2500); }
 
@@ -202,6 +211,7 @@ function renderTasks(){
       + '<div class="acts">';
     if (hasFiles) h += '<button class="folder-btn'+(taskFiles[t.id]._open?' open':'')+'" data-folder="'+esc(t.id)+'">'+(taskFiles[t.id]._open?'收起':'展开文件')+'</button>';
     else if (!done) h += '<button class="folder-btn" data-folder="'+esc(t.id)+'">扫描文件</button>';
+    h += '<button class="del-btn" data-deltask="'+esc(t.id)+'" title="删除该任务及文件">🗑</button>';
     h += '</div></div>';
     if (hasFiles && taskFiles[t.id]._open) {
       h += '<div class="task-files">';
@@ -210,8 +220,9 @@ function renderTasks(){
         h += '<div class="file-row">'
           + '<div class="fname">'+esc(f.name)+(playing?'<span class="now-playing">▶ 播放中</span>':'')+'</div>'
           + '<div class="fsize">'+fmtSize(f.size)+'</div>'
-          + '<div class="fstatus">'+(done?'可播放':'下载中可播')+'</div>'
+          + '<div class="fstatus">'+(done?'':'下载中 ')+remainText(f)+'</div>'
           + '<button class="play-btn" data-play="'+esc(f.path)+'">▶ 播放</button>'
+          + '<button class="del-btn" data-del="'+esc(f.path)+'" title="删除文件">🗑</button>'
           + '</div>';
       });
       h += '</div>';
@@ -222,6 +233,41 @@ function renderTasks(){
   // bind events
   box.querySelectorAll('[data-folder]').forEach(function(b){ b.onclick=function(){ toggleFolder(b.getAttribute('data-folder')); }; });
   box.querySelectorAll('[data-play]').forEach(function(b){ b.onclick=function(){ play(b.getAttribute('data-play')); }; });
+  box.querySelectorAll('[data-del]').forEach(function(b){ b.onclick=function(){ delFile(b.getAttribute('data-del')); }; });
+  box.querySelectorAll('[data-deltask]').forEach(function(b){ b.onclick=function(){ delTask(b.getAttribute('data-deltask')); }; });
+}
+
+/* ===== 删除 ===== */
+function delFile(path){
+  var name = path.split('/').pop();
+  if (!confirm('删除文件「'+name+'」？\n（播放记录会保留）')) return;
+  var dir = path.slice(0, path.length - name.length - 1) || DL;
+  api('/fs/remove', {dir:dir, names:[name]}).then(function(j){
+    delete knownVideos[path];
+    toast(j.code===200?'已删除':'删除失败：'+(j.message||''));
+    refreshTasks(); renderFileList();
+  });
+}
+function delTask(tid){
+  var t = taskMap[tid] || {};
+  var tname = taskName(t);
+  if (!confirm('删除「'+tname+'」的任务及文件？\n（播放记录会保留）')) return;
+  api('/fs/list', {path:DL, page:1, per_page:200, refresh:true}).then(function(j){
+    var items = (j.code===200 && j.data && j.data.content) ? j.data.content : [];
+    var dirs = items.filter(function(f){ return f.is_dir; });
+    var single = items.find(function(f){ return !f.is_dir && f.name===tname; });
+    var targetDir = dirs.find(function(d){ return d.name.toLowerCase().indexOf(tname.toLowerCase())>-1 || tname.toLowerCase().indexOf(d.name.toLowerCase())>-1; });
+    if (!targetDir && dirs.length===1 && !single) targetDir = dirs[0];
+    var del = single ? {dir:DL, names:[tname]} : (targetDir ? {dir:DL, names:[targetDir.name]} : null);
+    var finish = function(){
+      api('/admin/task/offline_download/delete?tid='+encodeURIComponent(tid), {});
+      api('/admin/task/offline_download_transfer/delete?tid='+encodeURIComponent(tid), {});
+      delete taskFiles[tid];
+      toast('已删除');
+      refreshTasks(); renderFileList();
+    };
+    if (del) api('/fs/remove', del).then(finish); else finish();
+  });
 }
 
 /* ===== 展开/扫描文件 ===== */
@@ -303,11 +349,14 @@ function renderFileList(){
       row.className = 'file-row';
       row.innerHTML = '<div class="fname">'+esc(f.name)+(playing?'<span class="now-playing">▶ 播放中</span>':'')+'</div>'
         +'<div class="fsize">'+fmtSize(f.size)+'</div>'
-        +'<button class="play-btn" data-play="'+esc(p)+'">▶ 播放</button>';
+        +'<div class="fstatus">'+remainText(f)+'</div>'
+        +'<button class="play-btn" data-play="'+esc(p)+'">▶ 播放</button>'
+        +'<button class="del-btn" data-del="'+esc(p)+'" title="删除文件">🗑</button>';
       sec.appendChild(row);
     });
     document.getElementById('tasks-view').appendChild(sec);
     sec.querySelectorAll('[data-play]').forEach(function(b){ b.onclick=function(){ play(b.getAttribute('data-play')); }; });
+    sec.querySelectorAll('[data-del]').forEach(function(b){ b.onclick=function(){ delFile(b.getAttribute('data-del')); }; });
   });
 }
 
@@ -344,6 +393,7 @@ video.addEventListener('timeupdate', function(){
   saveHistSoon();
 });
 video.addEventListener('ended', function(){ var p=currentPlayPath; if(p&&hist[p]){ hist[p].pos=hist[p].dur||hist[p].pos; saveHist(); } });
+video.addEventListener('error', function(){ toast('视频加载失败：文件可能已被自动清理（保留 1 小时）或格式不支持'); });
 window.addEventListener('beforeunload', saveHist);
 var saveTimer;
 function saveHistSoon(){ clearTimeout(saveTimer); saveTimer = setTimeout(saveHist, 4000); }
@@ -400,10 +450,44 @@ chkAuto.onchange = function(){ localStorage.setItem('yun_autoplay', chkAuto.chec
   } else show(true);
 })();
 
-// 定时刷新下载进度
+/* ===== 自动清理（1 小时过期） ===== */
+function cleanExpired(){
+  api('/fs/list', {path:DL, page:1, per_page:200, refresh:false}).then(function(j){
+    if (j.code !== 200) return;
+    var items = j.data.content || [];
+    var dirs = items.filter(function(f){ return f.is_dir; });
+    var rootFiles = items.filter(function(f){ return !f.is_dir; });
+    var expired = rootFiles.filter(function(f){ return (Date.now()-fileDate(f)) > 3600000; });
+    var expiredDirs = dirs.filter(function(f){ return (Date.now()-fileDate(f)) > 3600000; });
+    var pending = expired.length + expiredDirs.length;
+    if (!pending) return;
+    // collect all names to delete (AList remove supports batch)
+    var allNames = expired.map(function(f){ return f.name; }).concat(expiredDirs.map(function(f){ return f.name; }));
+    if (!allNames.length) return;
+    api('/fs/remove', {dir:DL, names:allNames}).then(function(j2){
+      if (j2.code === 200) {
+        allNames.forEach(function(n){
+          // clean up knownVideos and taskFiles references
+          var p = DL+'/'+n;
+          delete knownVideos[p];
+          Object.keys(taskFiles).forEach(function(tid){
+            taskFiles[tid] = taskFiles[tid].filter(function(f){ return f.path !== p && !f.path.startsWith(p+'/'); });
+          });
+        });
+        refreshTasks(); renderFileList();
+      }
+    });
+  });
+}
+
+// 定时刷新下载进度 + 文件列表 + 自动清理
 setInterval(function(){
-  if (token && !document.hidden && !document.getElementById('app-view').classList.contains('hidden')) refreshTasks();
-}, 3000);
+  if (token && !document.hidden && !document.getElementById('app-view').classList.contains('hidden')) {
+    refreshTasks();
+    refreshFiles();
+    cleanExpired();
+  }
+}, 5000);
 </script>
 </body>
 </html>
