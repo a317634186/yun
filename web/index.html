@@ -8,12 +8,10 @@
 *{box-sizing:border-box;margin:0;padding:0}
 body{background:#0e1420;color:#dbe4f0;font:15px/1.6 system-ui,"Microsoft YaHei",sans-serif}
 header{display:flex;justify-content:space-between;align-items:center;padding:14px 20px;background:#121a2a;border-bottom:1px solid #1f2a3f}
-.logo{font-size:18px;font-weight:700}
-.logo span{color:#4f8cff}
+.logo{font-size:18px;font-weight:700}.logo span{color:#4f8cff}
 main{max-width:960px;margin:0 auto;padding:20px 16px 60px}
 .card{background:#151d2e;border:1px solid #1f2a3f;border-radius:12px;padding:20px}
 .hidden{display:none!important}
-/* 登录 */
 #login-view{max-width:360px;margin:10vh auto 0}
 #login-view h2{font-size:16px;margin-bottom:14px;font-weight:600}
 input,button{font:inherit}
@@ -21,36 +19,42 @@ input[type=text],input[type=password]{width:100%;padding:10px 12px;border-radius
 input:focus{border-color:#4f8cff}
 button{cursor:pointer;border:none;border-radius:8px;padding:10px 16px;background:#243350;color:#dbe4f0}
 button:hover{background:#2d4166}
-button.primary{background:#4f8cff;color:#fff}
-button.primary:hover{background:#6ba1ff}
+button.primary{background:#4f8cff;color:#fff}button.primary:hover{background:#6ba1ff}
 button.mini{padding:4px 10px;font-size:12px;border-radius:6px}
+button.play-btn{background:#1a6b2a;color:#fff;padding:5px 14px;font-size:12px;border-radius:6px;white-space:nowrap}
+button.play-btn:hover{background:#22883a}
+button.folder-btn{background:#243350;color:#8ea2c4;padding:5px 10px;font-size:12px;border-radius:6px;white-space:nowrap}
+button.folder-btn:hover{background:#2d4166}
+button.folder-btn.open{background:#2a4a6b;color:#4f8cff}
 .err{color:#ff7a7a;font-size:13px;margin-top:10px;min-height:18px}
-/* 输入行 */
-.inputrow{display:flex;gap:10px;margin-bottom:16px;align-items:center}
-.inputrow input{flex:1}
+.inputrow{display:flex;gap:10px;margin-bottom:16px;align-items:center;flex-wrap:wrap}
+.inputrow input{flex:1;min-width:200px}
 .autolabel{display:flex;align-items:center;gap:6px;color:#8ea2c4;font-size:13px;white-space:nowrap;cursor:pointer}
-/* 播放器 */
 .playerbox{background:#000;border-radius:12px;overflow:hidden;border:1px solid #1f2a3f}
 .playerbox video{width:100%;aspect-ratio:16/9;display:block;background:#000}
 .ptip{display:flex;align-items:center;justify-content:center;aspect-ratio:16/9;color:#5a6b8c;flex-direction:column;gap:8px}
 .ptip .big{font-size:40px}
-/* 标签页 */
 .tabs{display:flex;gap:8px;margin:18px 0 12px}
 .tabs button{background:transparent;color:#8ea2c4;padding:6px 14px}
 .tabs button.active{background:#243350;color:#fff}
-/* 列表 */
-.item{display:flex;align-items:center;gap:12px;padding:10px 12px;border-radius:10px;background:#151d2e;border:1px solid #1f2a3f;margin-bottom:8px}
-.item:hover{border-color:#33456b}
-.item .name{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer}
-.item .name:hover{color:#6ba1ff}
-.item .meta{color:#7c8dab;font-size:12px;white-space:nowrap}
-.item .bar{flex:1;height:6px;border-radius:3px;background:#1f2a3f;overflow:hidden}
-.item .bar i{display:block;height:100%;background:#4f8cff;border-radius:3px;transition:width .5s}
-.item .acts{display:flex;gap:6px}
+.task{border:1px solid #1f2a3f;border-radius:10px;margin-bottom:10px;overflow:hidden;background:#151d2e}
+.task-head{display:flex;align-items:center;gap:10px;padding:12px 14px;cursor:default}
+.task-head .ico{width:22px;text-align:center;flex-shrink:0}
+.task-head .name{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:14px}
+.task-head .bar-wrap{width:120px;flex-shrink:0}
+.task-head .bar{height:6px;border-radius:3px;background:#1f2a3f;overflow:hidden}
+.task-head .bar i{display:block;height:100%;background:#4f8cff;border-radius:3px;transition:width .5s}
+.task-head .pct{color:#7c8dab;font-size:12px;width:44px;text-align:right;flex-shrink:0}
+.task-head .acts{display:flex;gap:6px;flex-shrink:0}
+.task-files{border-top:1px solid #1f2a3f;padding:8px 14px 10px}
+.file-row{display:flex;align-items:center;gap:10px;padding:6px 0}
+.file-row .fname{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px;color:#c0cad8}
+.file-row .fsize{color:#7c8dab;font-size:12px;flex-shrink:0}
+.file-row .fstatus{color:#7c8dab;font-size:11px;flex-shrink:0;max-width:80px;text-align:right}
 .empty{color:#5a6b8c;text-align:center;padding:26px 0;font-size:14px}
 .toast{position:fixed;left:50%;transform:translateX(-50%);bottom:28px;background:#243350;border:1px solid #33456b;color:#dbe4f0;padding:10px 18px;border-radius:10px;opacity:0;transition:opacity .3s;pointer-events:none;z-index:9}
 .toast.show{opacity:1}
-h3.sec{font-size:13px;color:#7c8dab;margin:16px 0 8px;font-weight:600}
+.now-playing{color:#4f8cff;font-size:11px;margin-left:6px}
 </style>
 </head>
 <body>
@@ -59,7 +63,6 @@ h3.sec{font-size:13px;color:#7c8dab;margin:16px 0 8px;font-weight:600}
   <div id="userbar" class="meta" style="color:#7c8dab"></div>
 </header>
 <main>
-  <!-- 登录 -->
   <section id="login-view" class="card hidden">
     <h2>登录</h2>
     <div style="margin-bottom:12px"><input type="text" id="in-user" value="admin" placeholder="用户名"></div>
@@ -67,31 +70,23 @@ h3.sec{font-size:13px;color:#7c8dab;margin:16px 0 8px;font-weight:600}
     <button class="primary" style="width:100%" id="btn-login">登 录</button>
     <div class="err" id="login-err"></div>
   </section>
-
-  <!-- 主界面 -->
   <section id="app-view" class="hidden">
     <div class="inputrow">
-      <input type="text" id="in-magnet" placeholder="粘贴磁力链接（magnet:?xt=...）或 .torrent 文件下载链接">
+      <input type="text" id="in-magnet" placeholder="粘贴磁力链接（magnet:?xt=...）">
       <button class="primary" id="btn-add">添加下载</button>
       <label class="autolabel"><input type="checkbox" id="chk-auto" checked>完成自动播放</label>
     </div>
-
     <div class="playerbox">
       <video id="video" controls preload="metadata" class="hidden"></video>
-      <div class="ptip" id="player-tip"><div class="big">🎬</div><div>下载完成后点击下方文件即可播放</div></div>
+      <div class="ptip" id="player-tip"><div class="big">🎬</div><div>添加磁力链接开始下载，下载中即可点击播放</div></div>
     </div>
-
     <div class="tabs">
       <button data-tab="tasks" class="active">下载列表</button>
       <button data-tab="history">播放记录</button>
     </div>
-
     <div id="tasks-view">
       <div id="task-list"></div>
-      <h3 class="sec">已完成文件（点击播放）</h3>
-      <div id="file-list"></div>
     </div>
-
     <div id="history-view" class="hidden">
       <div id="history-list"></div>
     </div>
@@ -101,13 +96,17 @@ h3.sec{font-size:13px;color:#7c8dab;margin:16px 0 8px;font-weight:600}
 
 <script>
 'use strict';
-var DL = '/downloads';                      // 下载目录（AList 挂载路径）
-var VIDEO_RE = /\.(mp4|mkv|webm|avi|mov|ts|flv|m2ts|wmv|mpg|mpeg|iso)$/i;
+var DL = '/downloads';
+var VIDEO_RE = /\.(mp4|mkv|webm|avi|mov|ts|flv|m2ts|wmv|mpg|mpeg)$/i;
 var token = localStorage.getItem('yun_token') || '';
 var auth = null;
 try { auth = JSON.parse(localStorage.getItem('yun_auth') || 'null'); } catch(e){}
 var hist = {};
 try { hist = JSON.parse(localStorage.getItem('yun_hist') || '{}'); } catch(e){}
+var taskMap = {};        // taskID -> task info
+var taskFiles = {};      // taskID -> [ {name, path, size} ] (cached video files)
+var knownVideos = {};    // path -> 1 (for auto-play detection)
+var currentPlayPath = '';
 
 function esc(s){ var d=document.createElement('div'); d.textContent=s==null?'':String(s); return d.innerHTML; }
 function fmtSize(n){ n=+n||0; if(n<1024) return n+'B'; var u=['KB','MB','GB','TB'],i=-1; do{n/=1024;i++}while(n>=1024&&i<3); return n.toFixed(1)+u[i]; }
@@ -116,7 +115,7 @@ function fmtDate(ts){ var d=new Date(ts); return (d.getMonth()+1)+'-'+d.getDate(
 var toastTimer;
 function toast(msg){ var t=document.getElementById('toast'); t.textContent=msg; t.classList.add('show'); clearTimeout(toastTimer); toastTimer=setTimeout(function(){t.classList.remove('show')},2500); }
 
-/* ---------- API ---------- */
+/* ===== API ===== */
 function api(path, body, retry){
   var opt = {method: body ? 'POST' : 'GET', headers:{'Content-Type':'application/json'}};
   if (token) opt.headers.Authorization = token;
@@ -128,8 +127,7 @@ function api(path, body, retry){
     });
 }
 function doLogin(u, p, silent){
-  return fetch('/api/auth/login', {method:'POST', headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({username:u, password:p})})
+  return fetch('/api/auth/login', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({username:u, password:p})})
     .then(function(r){ return r.json(); })
     .then(function(j){
       if (j.code !== 200) throw new Error(j.message || '登录失败');
@@ -141,170 +139,241 @@ function doLogin(u, p, silent){
     });
 }
 
-/* ---------- 视图切换 ---------- */
-function show(loginMode){
-  document.getElementById('login-view').classList.toggle('hidden', !loginMode);
-  document.getElementById('app-view').classList.toggle('hidden', loginMode);
-}
+/* ===== 视图 ===== */
+function show(login){ document.getElementById('login-view').classList.toggle('hidden', !login); document.getElementById('app-view').classList.toggle('hidden', login); }
 
-/* ---------- 登录 ---------- */
+/* ===== 登录 ===== */
 function loginClick(){
   var u = document.getElementById('in-user').value.trim() || 'admin';
   var p = document.getElementById('in-pass').value;
-  doLogin(u, p).then(function(){
-    document.getElementById('login-err').textContent = '';
-    enterApp();
-  }).catch(function(e){ document.getElementById('login-err').textContent = '登录失败：' + (e.message||'密码错误'); });
+  doLogin(u, p).then(function(){ document.getElementById('login-err').textContent=''; enterApp(); })
+    .catch(function(e){ document.getElementById('login-err').textContent='登录失败：'+(e.message||'密码错误'); });
 }
 function enterApp(){
   show(false);
-  document.getElementById('userbar').innerHTML = esc(auth.u) + ' · <a href="#" id="lnk-logout" style="color:#7c8dab">退出</a>';
+  document.getElementById('userbar').innerHTML = esc(auth.u)+' · <a href="#" id="lnk-logout" style="color:#7c8dab">退出</a>';
   document.getElementById('lnk-logout').onclick = function(){ localStorage.removeItem('yun_token'); localStorage.removeItem('yun_auth'); location.reload(); return false; };
   refreshTasks(); refreshFiles(); renderHistory();
 }
 
-/* ---------- 添加下载 ---------- */
+/* ===== 添加下载 ===== */
 function addDownload(){
   var el = document.getElementById('in-magnet');
   var url = el.value.trim();
   if (!url) { toast('请先粘贴链接'); return; }
   api('/fs/add_offline_download', {urls:[url], path:DL, tool:'aria2', delete_policy:'delete_never'}).then(function(j){
-    if (j.code === 200) { el.value=''; toast('已添加，开始下载'); refreshTasks(); }
-    else toast('添加失败：' + (j.message||'链接不合法'));
+    if (j.code === 200) { el.value=''; toast('已添加，开始下载'); taskFiles={}; refreshTasks(); }
+    else toast('添加失败：'+(j.message||'链接不合法'));
   });
 }
 
-/* ---------- 下载任务/文件列表 ---------- */
-var lastTasks = [];
+/* ===== 任务列表 ===== */
+var lastRaw = [];
 function refreshTasks(){
-  Promise.all([api('/admin/task/offline_download/undone'), api('/admin/task/offline_download_transfer/undone')]).then(function(rs){
-    lastTasks = [];
-    (rs[0].data||[]).forEach(function(t){ t._stage='下载'; lastTasks.push(t); });
-    (rs[1].data||[]).forEach(function(t){ t._stage='转存'; lastTasks.push(t); });
+  Promise.all([
+    api('/admin/task/offline_download/undone'),
+    api('/admin/task/offline_download/done')
+  ]).then(function(rs){
+    var tasks = (rs[0].data||[]).map(function(t){ t._stage='下载'; return t; })
+      .concat((rs[1].data||[]).map(function(t){ t._stage='已完成'; return t; }));
+    lastRaw = tasks;
+    tasks.forEach(function(t){ taskMap[t.id] = t; });
     renderTasks();
-    setTimeout(refreshFiles, 50);
   });
 }
+
+function taskName(t){ return (t.name||'').replace(/^download\s+/i,'').replace(/\s+to\s+\(.*?\)\s*$/,''); }
+
 function renderTasks(){
   var box = document.getElementById('task-list');
-  if (!lastTasks.length) { box.innerHTML = '<div class="empty">暂无下载任务，粘贴链接开始</div>'; return; }
+  if (!lastRaw.length) { box.innerHTML='<div class="empty">暂无下载任务，粘贴链接开始</div>'; return; }
   var h = '';
-  lastTasks.forEach(function(t){
+  lastRaw.forEach(function(t){
     var prog = Math.round(+t.progress || 0);
-    var label = t.error ? '失败' : (t._stage==='转存' ? '转存中 ' : '下载中 ') + prog + '%';
-    h += '<div class="item"><div style="width:22px;text-align:center">⬇️</div>'
-       + '<div style="flex:1;min-width:0"><div class="name" title="'+esc(t.name)+'">'+esc(t.name)+'</div>'
-       + '<div class="bar" style="margin-top:6px"><i style="width:'+prog+'%"></i></div></div>'
-       + '<div class="meta">'+label+'</div></div>';
+    var done = t._stage === '已完成';
+    var name = taskName(t);
+    var hasFiles = taskFiles[t.id] && taskFiles[t.id].length;
+    h += '<div class="task" data-tid="'+esc(t.id)+'">'
+      + '<div class="task-head">'
+      + '<div class="ico">'+(done?'✅':(t.error?'❌':'⬇️'))+'</div>'
+      + '<div class="name" title="'+esc(name)+'">'+esc(name)+'</div>'
+      + '<div class="bar-wrap"><div class="bar"><i style="width:'+prog+'%"></i></div></div>'
+      + '<div class="pct">'+(done?'100%':prog+'%')+'</div>'
+      + '<div class="acts">';
+    if (hasFiles) h += '<button class="folder-btn'+(taskFiles[t.id]._open?' open':'')+'" data-folder="'+esc(t.id)+'">'+(taskFiles[t.id]._open?'收起':'展开文件')+'</button>';
+    else if (!done) h += '<button class="folder-btn" data-folder="'+esc(t.id)+'">扫描文件</button>';
+    h += '</div></div>';
+    if (hasFiles && taskFiles[t.id]._open) {
+      h += '<div class="task-files">';
+      taskFiles[t.id].forEach(function(f){
+        var playing = currentPlayPath === f.path;
+        h += '<div class="file-row">'
+          + '<div class="fname">'+esc(f.name)+(playing?'<span class="now-playing">▶ 播放中</span>':'')+'</div>'
+          + '<div class="fsize">'+fmtSize(f.size)+'</div>'
+          + '<div class="fstatus">'+(done?'可播放':'下载中可播')+'</div>'
+          + '<button class="play-btn" data-play="'+esc(f.path)+'">▶ 播放</button>'
+          + '</div>';
+      });
+      h += '</div>';
+    }
+    h += '</div>';
   });
   box.innerHTML = h;
-}
-var knownFiles = null;
-function handleNewFiles(files){
-  var fresh = [];
-  if (knownFiles !== null) fresh = files.filter(function(f){ return !knownFiles[DL+'/'+f.name]; });
-  knownFiles = {};
-  files.forEach(function(f){ knownFiles[DL+'/'+f.name] = 1; });
-  if (fresh.length && document.getElementById('chk-auto').checked) {
-    fresh.sort(function(a,b){ return b.modified==a.modified ? 0 : (b.modified>a.modified?1:-1); });
-    toast('下载完成，自动播放');
-    play(DL+'/'+fresh[0].name, 0);
-  }
+  // bind events
+  box.querySelectorAll('[data-folder]').forEach(function(b){ b.onclick=function(){ toggleFolder(b.getAttribute('data-folder')); }; });
+  box.querySelectorAll('[data-play]').forEach(function(b){ b.onclick=function(){ play(b.getAttribute('data-play')); }; });
 }
 
+/* ===== 展开/扫描文件 ===== */
+function toggleFolder(tid){
+  if (taskFiles[tid] && taskFiles[tid]._open) {
+    taskFiles[tid]._open = false;
+    renderTasks();
+    return;
+  }
+  // find matching subdir in downloads
+  api('/fs/list', {path:DL, page:1, per_page:200, refresh:false}).then(function(j){
+    if (j.code !== 200) return;
+    var tname = taskName(taskMap[tid] || {});
+    var items = j.data.content || [];
+    var dirs = items.filter(function(f){ return f.is_dir; });
+    var files = items.filter(function(f){ return !f.is_dir && VIDEO_RE.test(f.name); });
+    // try to find a directory matching task name
+    var targetDir = null;
+    dirs.forEach(function(d){
+      if (d.name.toLowerCase().indexOf(tname.toLowerCase()) > -1 || tname.toLowerCase().indexOf(d.name.toLowerCase()) > -1) targetDir = d.name;
+    });
+    // if only one dir and no files, use that dir
+    if (!targetDir && dirs.length === 1 && !files.length) targetDir = dirs[0].name;
+    // if task name looks like a video file, it might be a direct download
+    if (!targetDir && VIDEO_RE.test(tname)) {
+      var found = items.find(function(f){ return !f.is_dir && f.name === tname; });
+      if (found) targetDir = '__direct__';
+    }
+    if (targetDir && targetDir !== '__direct__') {
+      // list files in subdir
+      api('/fs/list', {path: DL+'/'+targetDir, page:1, per_page:200, refresh:false}).then(function(j2){
+        if (j2.code !== 200) return;
+        var vids = (j2.data.content||[]).filter(function(f){ return !f.is_dir && VIDEO_RE.test(f.name); });
+        taskFiles[tid] = vids.map(function(f){ return {name:f.name, path:DL+'/'+targetDir+'/'+f.name, size:f.size}; });
+        taskFiles[tid]._open = true;
+        renderTasks();
+        renderFileList();
+      });
+    } else {
+      // single file torrent or files in root
+      var vids = files;
+      taskFiles[tid] = vids.map(function(f){ return {name:f.name, path:DL+'/'+f.name, size:f.size}; });
+      taskFiles[tid]._open = true;
+      renderTasks();
+      renderFileList();
+    }
+  });
+}
+
+/* ===== 已完成文件列表（底部） ===== */
 function refreshFiles(){
   api('/fs/list', {path:DL, page:1, per_page:200, refresh:false}).then(function(j){
-    var box = document.getElementById('file-list');
-    if (j.code !== 200) { box.innerHTML = '<div class="empty">'+esc(j.message||'读取失败')+'</div>'; return; }
-    var files = (j.data.content||[]).filter(function(f){ return !f.is_dir && VIDEO_RE.test(f.name); });
-    handleNewFiles(files);
-    var dirs  = (j.data.content||[]).filter(function(f){ return f.is_dir; });
-    if (!files.length && !dirs.length) { box.innerHTML = '<div class="empty">还没有文件</div>'; return; }
-    var h = '';
-    files.sort(function(a,b){ return b.modified==a.modified ? 0 : (b.modified>a.modified?1:-1); }).forEach(function(f){
-      var p = DL + '/' + f.name;
-      var hc = hist[p];
-      var meta = fmtSize(f.size);
-      if (hc && hc.pos > 10 && hc.pos < hc.dur*0.95) meta += ' · 已看 ' + fmtTime(hc.pos);
-      h += '<div class="item"><div style="width:22px;text-align:center">'+(hc&&hc.pos>hc.dur*0.95?'✅':'🎞️')+'</div>'
-         + '<div class="name" data-play="'+esc(p)+'">'+esc(f.name)+'</div><div class="meta">'+meta+'</div>'
-         + '<div class="acts"><button class="mini" data-del="'+esc(f.name)+'">删除</button></div></div>';
-    });
-    dirs.forEach(function(f){
-      h += '<div class="item"><div style="width:22px;text-align:center">📁</div>'
-         + '<div class="name" style="color:#8ea2c4">📁 '+esc(f.name)+'（多文件文件夹）</div></div>';
-    });
-    box.innerHTML = h;
-    box.querySelectorAll('[data-play]').forEach(function(n){ n.onclick = function(){ play(n.getAttribute('data-play'), null); }; });
-    box.querySelectorAll('[data-del]').forEach(function(n){ n.onclick = function(){ delFile(n.getAttribute('data-del')); }; });
-  });
-}
-function delFile(name){
-  if (!confirm('删除文件：' + name + ' ？')) return;
-  api('/fs/remove', {dir:DL, names:[name]}).then(function(j){
-    toast(j.code===200 ? '已删除' : '删除失败：'+(j.message||'')); refreshFiles();
+    if (j.code !== 200) return;
+    var items = j.data.content || [];
+    var rootFiles = items.filter(function(f){ return !f.is_dir && VIDEO_RE.test(f.name); });
+    var dirs = items.filter(function(f){ return f.is_dir; });
+    // auto-play check
+    rootFiles.forEach(function(f){ var p=DL+'/'+f.name; if(!knownVideos[p]){knownVideos[p]=1; checkAutoPlay(p);} });
+    renderFileList();
   });
 }
 
-/* ---------- 播放 ---------- */
-var video = document.getElementById('video');
-function play(path, resume){
-  api('/fs/get', {path:path}).then(function(j){
-    if (j.code !== 200) { toast('无法播放：'+(j.message||'文件不存在')); return; }
-    var d = j.data;
-    if (d.is_dir) { toast('这是一个文件夹，请播放其中的视频文件'); return; }
-    var src = d.raw_url && /^https?:/.test(d.raw_url) ? d.raw_url : ('/d' + path + (d.sign ? '?sign='+encodeURIComponent(d.sign) : ''));
-    document.getElementById('player-tip').classList.add('hidden');
-    video.classList.remove('hidden');
-    video.src = src;
-    var hc = hist[path];
-    if (resume == null) resume = (hc && hc.pos > 10 && hc.pos < hc.dur*0.95) ? hc.pos : 0;
-    video.addEventListener('loadedmetadata', function(){ if (resume>0) video.currentTime = resume; }, {once:true});
-    video.play().catch(function(){});
-    video.scrollIntoView({behavior:'smooth', block:'start'});
+function renderFileList(){
+  var existing = document.getElementById('file-section');
+  if (existing) existing.remove();
+  api('/fs/list', {path:DL, page:1, per_page:200, refresh:false}).then(function(j){
+    if (j.code !== 200) return;
+    var items = j.data.content || [];
+    var rootFiles = items.filter(function(f){ return !f.is_dir && VIDEO_RE.test(f.name); });
+    if (!rootFiles.length) return;
+    var sec = document.createElement('div');
+    sec.id = 'file-section';
+    sec.style.cssText = 'margin-top:18px';
+    sec.innerHTML = '<h3 style="font-size:13px;color:#7c8dab;margin-bottom:8px;font-weight:600">独立视频文件</h3>';
+    rootFiles.forEach(function(f){
+      var p = DL+'/'+f.name;
+      var playing = currentPlayPath === p;
+      var row = document.createElement('div');
+      row.className = 'file-row';
+      row.innerHTML = '<div class="fname">'+esc(f.name)+(playing?'<span class="now-playing">▶ 播放中</span>':'')+'</div>'
+        +'<div class="fsize">'+fmtSize(f.size)+'</div>'
+        +'<button class="play-btn" data-play="'+esc(p)+'">▶ 播放</button>';
+      sec.appendChild(row);
+    });
+    document.getElementById('tasks-view').appendChild(sec);
+    sec.querySelectorAll('[data-play]').forEach(function(b){ b.onclick=function(){ play(b.getAttribute('data-play')); }; });
   });
 }
+
+function checkAutoPlay(path){
+  if (!document.getElementById('chk-auto').checked) return;
+  var hc = hist[path];
+  if (hc && hc.pos > 10) return; // already watched, don't auto-play
+  toast('新文件可播放');
+  play(path, 0);
+}
+
+/* ===== 播放 ===== */
+var video = document.getElementById('video');
+function play(path, resume){
+  currentPlayPath = path;
+  renderTasks(); // update "播放中" labels
+  // construct direct stream URL via nginx proxy
+  // path is like /downloads/filename.mp4 or /downloads/subdir/filename.mp4
+  var src = '/d' + path;
+  document.getElementById('player-tip').classList.add('hidden');
+  video.classList.remove('hidden');
+  video.src = src;
+  // resume position
+  var hc = hist[path];
+  if (resume == null) resume = (hc && hc.pos > 10 && hc.pos < hc.dur*0.95) ? hc.pos : 0;
+  video.addEventListener('loadedmetadata', function(){ if (resume>0) video.currentTime = resume; }, {once:true});
+  video.play().catch(function(){});
+  video.scrollIntoView({behavior:'smooth', block:'start'});
+}
 video.addEventListener('timeupdate', function(){
-  var p = currentPath(); if (!p) return;
+  var p = currentPlayPath; if (!p) return;
   if (!hist[p]) hist[p] = {pos:0, dur:0, ts:0};
   hist[p].pos = video.currentTime; hist[p].dur = video.duration || hist[p].dur; hist[p].ts = Date.now();
   saveHistSoon();
 });
-video.addEventListener('ended', function(){ var p=currentPath(); if(p&&hist[p]){ hist[p].pos=hist[p].dur||hist[p].pos; saveHist(); } });
+video.addEventListener('ended', function(){ var p=currentPlayPath; if(p&&hist[p]){ hist[p].pos=hist[p].dur||hist[p].pos; saveHist(); } });
 window.addEventListener('beforeunload', saveHist);
-var currentPlayPath = null;
-function currentPath(){ return currentPlayPath; }
-var _origPlay = play;
-play = function(p, r){ currentPlayPath = p; _origPlay(p, r); };
-
 var saveTimer;
 function saveHistSoon(){ clearTimeout(saveTimer); saveTimer = setTimeout(saveHist, 4000); }
 function saveHist(){ localStorage.setItem('yun_hist', JSON.stringify(hist)); }
 
-/* ---------- 播放记录 ---------- */
+/* ===== 播放记录 ===== */
 function renderHistory(){
   var box = document.getElementById('history-list');
   var list = Object.keys(hist).map(function(p){ return Object.assign({path:p}, hist[p]); })
     .filter(function(h){ return h.ts; }).sort(function(a,b){ return b.ts-a.ts; });
-  if (!list.length) { box.innerHTML = '<div class="empty">暂无播放记录</div>'; return; }
+  if (!list.length) { box.innerHTML='<div class="empty">暂无播放记录</div>'; return; }
   var h = '';
   list.forEach(function(it){
     var pct = it.dur ? Math.min(100, Math.round(it.pos/it.dur*100)) : 0;
     var name = it.path.split('/').pop();
-    h += '<div class="item"><div style="width:22px;text-align:center">'+(pct>=95?'✅':'⏱️')+'</div>'
-       + '<div style="flex:1;min-width:0"><div class="name" data-play2="'+esc(it.path)+'">'+esc(name)+'</div>'
-       + '<div class="bar" style="margin-top:6px"><i style="width:'+pct+'%"></i></div></div>'
-       + '<div class="meta">'+fmtDate(it.ts)+'<br>'+fmtTime(it.pos)+' / '+fmtTime(it.dur)+'</div>'
-       + '<div class="acts"><button class="mini" data-play2btn="'+esc(it.path)+'">'+(pct>=95?'重播':'继续')+'</button>'
-       + '<button class="mini" data-rmhist="'+esc(it.path)+'">移除</button></div></div>';
+    h += '<div class="task"><div class="task-head">'
+      + '<div class="ico">'+(pct>=95?'✅':'⏱️')+'</div>'
+      + '<div class="name" data-hplay="'+esc(it.path)+'">'+esc(name)+'</div>'
+      + '<div class="bar-wrap"><div class="bar"><i style="width:'+pct+'%"></i></div></div>'
+      + '<div class="fsize">'+fmtDate(it.ts)+'<br>'+fmtTime(it.pos)+'/'+fmtTime(it.dur)+'</div>'
+      + '<div class="acts"><button class="play-btn" data-hplay="'+esc(it.path)+'">'+(pct>=95?'重播':'继续')+'</button>'
+      + '<button class="mini" data-hrm="'+esc(it.path)+'">删除</button></div>'
+      + '</div></div>';
   });
   box.innerHTML = h;
-  box.querySelectorAll('[data-play2]').forEach(function(n){ n.onclick=function(){ play(n.getAttribute('data-play2')); switchTab('tasks'); }; });
-  box.querySelectorAll('[data-play2btn]').forEach(function(n){ n.onclick=function(){ play(n.getAttribute('data-play2btn')); switchTab('tasks'); }; });
-  box.querySelectorAll('[data-rmhist]').forEach(function(n){ n.onclick=function(){ delete hist[n.getAttribute('data-rmhist')]; saveHist(); renderHistory(); }; });
+  box.querySelectorAll('[data-hplay]').forEach(function(n){ n.onclick=function(){ play(n.getAttribute('data-hplay')); switchTab('tasks'); }; });
+  box.querySelectorAll('[data-hrm]').forEach(function(n){ n.onclick=function(){ delete hist[n.getAttribute('data-hrm')]; saveHist(); renderHistory(); }; });
 }
 
-/* ---------- 标签页 ---------- */
+/* ===== 标签页 ===== */
 function switchTab(name){
   document.querySelectorAll('.tabs button').forEach(function(b){ b.classList.toggle('active', b.dataset.tab===name); });
   document.getElementById('tasks-view').classList.toggle('hidden', name!=='tasks');
@@ -312,14 +381,14 @@ function switchTab(name){
 }
 document.querySelectorAll('.tabs button').forEach(function(b){ b.onclick=function(){ switchTab(b.dataset.tab); if(b.dataset.tab==='history') renderHistory(); }; });
 
-/* ---------- 启动 ---------- */
+/* ===== 启动 ===== */
 document.getElementById('btn-login').onclick = loginClick;
 document.getElementById('in-pass').addEventListener('keydown', function(e){ if(e.key==='Enter') loginClick(); });
 document.getElementById('btn-add').onclick = addDownload;
+document.getElementById('in-magnet').addEventListener('keydown', function(e){ if(e.key==='Enter') addDownload(); });
 var chkAuto = document.getElementById('chk-auto');
 if (localStorage.getItem('yun_autoplay') === '0') chkAuto.checked = false;
 chkAuto.onchange = function(){ localStorage.setItem('yun_autoplay', chkAuto.checked ? '1' : '0'); };
-document.getElementById('in-magnet').addEventListener('keydown', function(e){ if(e.key==='Enter') addDownload(); });
 
 (function boot(){
   if (token && auth) {
@@ -331,7 +400,7 @@ document.getElementById('in-magnet').addEventListener('keydown', function(e){ if
   } else show(true);
 })();
 
-/* 定时刷新下载进度 */
+// 定时刷新下载进度
 setInterval(function(){
   if (token && !document.hidden && !document.getElementById('app-view').classList.contains('hidden')) refreshTasks();
 }, 3000);
