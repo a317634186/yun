@@ -26,8 +26,9 @@ button.primary:hover{background:#6ba1ff}
 button.mini{padding:4px 10px;font-size:12px;border-radius:6px}
 .err{color:#ff7a7a;font-size:13px;margin-top:10px;min-height:18px}
 /* 输入行 */
-.inputrow{display:flex;gap:10px;margin-bottom:16px}
+.inputrow{display:flex;gap:10px;margin-bottom:16px;align-items:center}
 .inputrow input{flex:1}
+.autolabel{display:flex;align-items:center;gap:6px;color:#8ea2c4;font-size:13px;white-space:nowrap;cursor:pointer}
 /* 播放器 */
 .playerbox{background:#000;border-radius:12px;overflow:hidden;border:1px solid #1f2a3f}
 .playerbox video{width:100%;aspect-ratio:16/9;display:block;background:#000}
@@ -72,6 +73,7 @@ h3.sec{font-size:13px;color:#7c8dab;margin:16px 0 8px;font-weight:600}
     <div class="inputrow">
       <input type="text" id="in-magnet" placeholder="粘贴磁力链接（magnet:?xt=...）或 .torrent 文件下载链接">
       <button class="primary" id="btn-add">添加下载</button>
+      <label class="autolabel"><input type="checkbox" id="chk-auto" checked>完成自动播放</label>
     </div>
 
     <div class="playerbox">
@@ -175,11 +177,11 @@ function addDownload(){
 /* ---------- 下载任务/文件列表 ---------- */
 var lastTasks = [];
 function refreshTasks(){
-  Promise.all([api('/admin/task/aria2/undone'), api('/admin/task/aria2/done')]).then(function(rs){
+  Promise.all([api('/admin/task/offline_download/undone'), api('/admin/task/offline_download_transfer/undone')]).then(function(rs){
     lastTasks = [];
-    (rs[0].data||[]).forEach(function(t){ lastTasks.push(t); });
+    (rs[0].data||[]).forEach(function(t){ t._stage='下载'; lastTasks.push(t); });
+    (rs[1].data||[]).forEach(function(t){ t._stage='转存'; lastTasks.push(t); });
     renderTasks();
-    (rs[1].data||[]).forEach(function(t){ /* 完成任务由文件列表展示 */ });
     setTimeout(refreshFiles, 50);
   });
 }
@@ -187,20 +189,35 @@ function renderTasks(){
   var box = document.getElementById('task-list');
   if (!lastTasks.length) { box.innerHTML = '<div class="empty">暂无下载任务，粘贴链接开始</div>'; return; }
   var h = '';
-  lastTasks.forEach(function(t, i){
-    var prog = Math.round((t.progress>1 ? t.progress : t.progress*100) || 0);
+  lastTasks.forEach(function(t){
+    var prog = Math.round(+t.progress || 0);
+    var label = t.error ? '失败' : (t._stage==='转存' ? '转存中 ' : '下载中 ') + prog + '%';
     h += '<div class="item"><div style="width:22px;text-align:center">⬇️</div>'
        + '<div style="flex:1;min-width:0"><div class="name" title="'+esc(t.name)+'">'+esc(t.name)+'</div>'
        + '<div class="bar" style="margin-top:6px"><i style="width:'+prog+'%"></i></div></div>'
-       + '<div class="meta">'+prog+'%</div></div>';
+       + '<div class="meta">'+label+'</div></div>';
   });
   box.innerHTML = h;
 }
+var knownFiles = null;
+function handleNewFiles(files){
+  var fresh = [];
+  if (knownFiles !== null) fresh = files.filter(function(f){ return !knownFiles[DL+'/'+f.name]; });
+  knownFiles = {};
+  files.forEach(function(f){ knownFiles[DL+'/'+f.name] = 1; });
+  if (fresh.length && document.getElementById('chk-auto').checked) {
+    fresh.sort(function(a,b){ return b.modified==a.modified ? 0 : (b.modified>a.modified?1:-1); });
+    toast('下载完成，自动播放');
+    play(DL+'/'+fresh[0].name, 0);
+  }
+}
+
 function refreshFiles(){
   api('/fs/list', {path:DL, page:1, per_page:200, refresh:false}).then(function(j){
     var box = document.getElementById('file-list');
     if (j.code !== 200) { box.innerHTML = '<div class="empty">'+esc(j.message||'读取失败')+'</div>'; return; }
     var files = (j.data.content||[]).filter(function(f){ return !f.is_dir && VIDEO_RE.test(f.name); });
+    handleNewFiles(files);
     var dirs  = (j.data.content||[]).filter(function(f){ return f.is_dir; });
     if (!files.length && !dirs.length) { box.innerHTML = '<div class="empty">还没有文件</div>'; return; }
     var h = '';
@@ -299,6 +316,9 @@ document.querySelectorAll('.tabs button').forEach(function(b){ b.onclick=functio
 document.getElementById('btn-login').onclick = loginClick;
 document.getElementById('in-pass').addEventListener('keydown', function(e){ if(e.key==='Enter') loginClick(); });
 document.getElementById('btn-add').onclick = addDownload;
+var chkAuto = document.getElementById('chk-auto');
+if (localStorage.getItem('yun_autoplay') === '0') chkAuto.checked = false;
+chkAuto.onchange = function(){ localStorage.setItem('yun_autoplay', chkAuto.checked ? '1' : '0'); };
 document.getElementById('in-magnet').addEventListener('keydown', function(e){ if(e.key==='Enter') addDownload(); });
 
 (function boot(){
