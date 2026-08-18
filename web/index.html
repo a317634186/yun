@@ -162,6 +162,7 @@ function enterApp(){
   show(false);
   document.getElementById('userbar').innerHTML = esc(auth.u)+' · <a href="#" id="lnk-logout" style="color:#7c8dab">退出</a>';
   document.getElementById('lnk-logout').onclick = function(){ localStorage.removeItem('yun_token'); localStorage.removeItem('yun_auth'); location.reload(); return false; };
+  healStorage();
   refreshTasks(); refreshFiles(); renderHistory();
 }
 
@@ -275,22 +276,43 @@ function delTask(tid){
   });
 }
 
+/* ===== 目录列表（nginx 直接读磁盘，无需 AList 存储，下载中即可见） ===== */
+function lsDir(path){
+  return fetch('/ls' + path + '/').then(function(r){ return r.json(); })
+    .then(function(arr){
+      return (arr||[]).map(function(e){
+        var n = e.name; try { n = decodeURIComponent(n); } catch(err){}
+        return {name:n, is_dir:e.type==='directory', size:+e.size||0, modified:e.mtime};
+      });
+    }).catch(function(){ return null; });
+}
+
+/* ===== 自动修复 AList 的 /downloads 存储挂载（删除文件需要它） ===== */
+var healed = false;
+function healStorage(){
+  if (healed) return;
+  api('/fs/list', {path:DL, page:1, per_page:5, refresh:false}).then(function(j){
+    if (j.code === 200) { healed = true; return; }
+    api('/admin/storage/create', {mount_path:'/downloads', driver:'Local', addition:'{"root_folder_path":"/root/Download"}'}).then(function(j2){
+      if (j2.code === 200) { healed = true; toast('已自动修复下载目录挂载'); }
+    });
+  });
+}
+
 /* ===== 展开/扫描文件 ===== */
 var scanTs = {};   // tid -> last scan time (throttle)
 function collectVideos(cb){
-  api('/fs/list', {path:DL, page:1, per_page:200, refresh:false}).then(function(j){
-    if (j.code !== 200) return cb(null);
-    var items = j.data.content || [];
+  lsDir(DL).then(function(items){
+    if (!items) return cb(null);
     var dirs = items.filter(function(f){ return f.is_dir; });
     var rootVids = items.filter(function(f){ return !f.is_dir && VIDEO_RE.test(f.name); })
-      .map(function(f){ return {name:f.name, path:DL+'/'+f.name, size:f.size}; });
+      .map(function(f){ return {name:f.name, path:DL+'/'+f.name, size:f.size, modified:f.modified}; });
     if (!dirs.length) return cb({root:rootVids, dirs:{}});
     var pending = dirs.length, dirMap = {};
     dirs.forEach(function(d){
-      api('/fs/list', {path:DL+'/'+d.name, page:1, per_page:200, refresh:false}).then(function(j2){
-        dirMap[d.name] = (j2.code===200 ? (j2.data.content||[]) : [])
-          .filter(function(f){ return !f.is_dir && VIDEO_RE.test(f.name); })
-          .map(function(f){ return {name:f.name, path:DL+'/'+d.name+'/'+f.name, size:f.size}; });
+      lsDir(DL+'/'+d.name).then(function(sub){
+        dirMap[d.name] = (sub||[]).filter(function(f){ return !f.is_dir && VIDEO_RE.test(f.name); })
+          .map(function(f){ return {name:f.name, path:DL+'/'+d.name+'/'+f.name, size:f.size, modified:f.modified}; });
         if (--pending === 0) cb({root:rootVids, dirs:dirMap});
       });
     });
@@ -336,23 +358,19 @@ function toggleFolder(tid){
 
 /* ===== 已完成文件列表（底部） ===== */
 function refreshFiles(){
-  api('/fs/list', {path:DL, page:1, per_page:200, refresh:false}).then(function(j){
-    if (j.code !== 200) return;
-    var items = j.data.content || [];
+  lsDir(DL).then(function(items){
+    if (!items) return;
     var rootFiles = items.filter(function(f){ return !f.is_dir && VIDEO_RE.test(f.name); });
-    var dirs = items.filter(function(f){ return f.is_dir; });
     // auto-play check
     rootFiles.forEach(function(f){ var p=DL+'/'+f.name; if(!knownVideos[p]){knownVideos[p]=1; checkAutoPlay(p);} });
-    renderFileList();
   });
 }
 
 function renderFileList(){
   var existing = document.getElementById('file-section');
   if (existing) existing.remove();
-  api('/fs/list', {path:DL, page:1, per_page:200, refresh:false}).then(function(j){
-    if (j.code !== 200) return;
-    var items = j.data.content || [];
+  lsDir(DL).then(function(items){
+    if (!items) return;
     var rootFiles = items.filter(function(f){ return !f.is_dir && VIDEO_RE.test(f.name); });
     if (!rootFiles.length) return;
     var sec = document.createElement('div');
@@ -469,22 +487,14 @@ chkAuto.onchange = function(){ localStorage.setItem('yun_autoplay', chkAuto.chec
 
 /* ===== 自动清理（1 小时过期） ===== */
 function cleanExpired(){
-  api('/fs/list', {path:DL, page:1, per_page:200, refresh:false}).then(function(j){
-    if (j.code !== 200) return;
-    var items = j.data.content || [];
-    var dirs = items.filter(function(f){ return f.is_dir; });
-    var rootFiles = items.filter(function(f){ return !f.is_dir; });
-    var expired = rootFiles.filter(function(f){ return (Date.now()-fileDate(f)) > 3600000; });
-    var expiredDirs = dirs.filter(function(f){ return (Date.now()-fileDate(f)) > 3600000; });
-    var pending = expired.length + expiredDirs.length;
-    if (!pending) return;
-    // collect all names to delete (AList remove supports batch)
-    var allNames = expired.map(function(f){ return f.name; }).concat(expiredDirs.map(function(f){ return f.name; }));
-    if (!allNames.length) return;
+  lsDir(DL).then(function(items){
+    if (!items) return;
+    var expired = items.filter(function(f){ return (Date.now()-fileDate(f)) > 3600000; });
+    if (!expired.length) return;
+    var allNames = expired.map(function(f){ return f.name; });
     api('/fs/remove', {dir:DL, names:allNames}).then(function(j2){
       if (j2.code === 200) {
         allNames.forEach(function(n){
-          // clean up knownVideos and taskFiles references
           var p = DL+'/'+n;
           delete knownVideos[p];
           Object.keys(taskFiles).forEach(function(tid){
