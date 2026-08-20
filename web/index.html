@@ -58,6 +58,10 @@ button.del-btn:hover{background:#5a2020}
 .toast{position:fixed;left:50%;transform:translateX(-50%);bottom:28px;background:#243350;border:1px solid #33456b;color:#dbe4f0;padding:10px 18px;border-radius:10px;opacity:0;transition:opacity .3s;pointer-events:none;z-index:9}
 .toast.show{opacity:1}
 .now-playing{color:#4f8cff;font-size:11px;margin-left:6px}
+.task-err{padding:8px 14px;border-top:1px solid #1f2a3f;color:#ff9b9b;font-size:12px;line-height:1.5;background:#1e1418}
+.task-err.warn{color:#e0b155;background:#1c1810}
+.stage{display:inline-block;background:#243350;color:#8ea2c4;font-size:11px;padding:1px 6px;border-radius:4px;margin-right:6px}
+.banner{margin:14px 0;padding:10px 14px;border-radius:10px;background:#2a1c1c;border:1px solid #5a2020;color:#ff9b9b;font-size:13px;line-height:1.6}
 .pbar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:10px 12px;background:#121a2a;border-top:1px solid #1f2a3f;font-size:12px;color:#8ea2c4}
 .pbar label{display:flex;align-items:center;gap:5px}
 .pbar .badge{padding:3px 8px;border-radius:6px;background:#243350;color:#9fb6dc;white-space:nowrap}
@@ -229,16 +233,24 @@ function addDownload(){
 /* ===== 任务列表 ===== */
 var lastRaw = [];
 function refreshTasks(){
+  // 也要看「转存」任务：aria2 是先下到 AList 临时目录，再由转存任务搬进 downloads/。
+  // 只看下载任务的话，卡在转存这一步会完全看不出来。
   Promise.all([
     api('/admin/task/offline_download/undone'),
-    api('/admin/task/offline_download/done')
+    api('/admin/task/offline_download/done'),
+    api('/admin/task/offline_download_transfer/undone'),
+    api('/admin/task/offline_download_transfer/done')
   ]).then(function(rs){
-    var tasks = (rs[0].data||[]).map(function(t){ t._stage='下载'; return t; })
-      .concat((rs[1].data||[]).map(function(t){ t._stage='已完成'; return t; }));
+    var mk = function(list, stage, kind){
+      return (list||[]).map(function(t){ t._stage=stage; t._kind=kind; return t; });
+    };
+    var dl = mk(rs[0].data, '下载', 'dl').concat(mk(rs[1].data, '已完成', 'dl'));
+    var tr = mk(rs[2].data, '转存中', 'tr').concat(mk(rs[3].data, '转存完成', 'tr'));
+    var tasks = dl.concat(tr);
     lastRaw = tasks;
     tasks.forEach(function(t){ taskMap[t.id] = t; });
-    // 自动扫描：无文件缓存的任务立即扫；下载中的任务每 15 秒重扫（发现新视频）
-    tasks.forEach(function(t){
+    // 自动扫描：无文件缓存的任务立即扫；未完成的任务每 15 秒重扫（发现新视频）
+    dl.forEach(function(t){
       if (!taskFiles[t.id] || (!taskFiles[t.id].length && Date.now()-(scanTs[t.id]||0) > 15000)) assignFiles(t.id);
       else if (t._stage !== '已完成' && Date.now()-(scanTs[t.id]||0) > 15000) assignFiles(t.id);
     });
@@ -246,7 +258,20 @@ function refreshTasks(){
   });
 }
 
-function taskName(t){ return (t.name||'').replace(/^download\s+/i,'').replace(/\s+to\s+\(.*?\)\s*$/,''); }
+/* 任务名可能就是一整条磁力链接。把 dn= 里的真实名字抠出来：
+   既好看，也让下面「任务名 ↔ 文件夹名」的匹配真的能匹配上 */
+function taskName(t){
+  var n = (t.name||'').replace(/^download\s+/i,'').replace(/\s+to\s+\(.*?\)\s*$/,'').trim();
+  var m = n.match(/[?&]dn=([^&\s]+)/i);
+  if (m) {
+    try { return decodeURIComponent(m[1].replace(/\+/g,' ')); } catch(e){ return m[1]; }
+  }
+  if (/^magnet:/i.test(n)) {
+    var h = n.match(/btih:([0-9a-z]+)/i);
+    return h ? '磁力 ' + h[1].slice(0,16) + '…' : n;
+  }
+  return n;
+}
 
 function renderTasks(){
   var box = document.getElementById('task-list');
@@ -254,20 +279,27 @@ function renderTasks(){
   var h = '';
   lastRaw.forEach(function(t){
     var prog = Math.round(+t.progress || 0);
-    var done = t._stage === '已完成';
+    var isTr = t._kind === 'tr';
+    var done = t._stage === '已完成' || t._stage === '转存完成';
     var name = taskName(t);
     var hasFiles = taskFiles[t.id] && taskFiles[t.id].length;
     var openState = hasFiles && taskFiles[t.id]._open;
     h += '<div class="task" data-tid="'+esc(t.id)+'">'
       + '<div class="task-head">'
-      + '<div class="ico">'+(done?'✅':(t.error?'❌':'⬇️'))+'</div>'
-      + '<div class="name" title="'+esc(name)+'">'+esc(name)+'</div>'
+      + '<div class="ico">'+(t.error?'❌':(done?'✅':(isTr?'📦':'⬇️')))+'</div>'
+      + '<div class="name" title="'+esc(name)+'">'+(isTr?'<span class="stage">转存</span>':'')+esc(name)+'</div>'
       + '<div class="bar-wrap"><div class="bar"><i style="width:'+prog+'%"></i></div></div>'
       + '<div class="pct">'+(done?'100%':prog+'%')+'</div>'
       + '<div class="acts">';
-    h += '<button class="folder-btn'+(openState?' open':'')+'" data-folder="'+esc(t.id)+'">'+(openState?'收起':'展开文件')+'</button>';
-    h += '<button class="del-btn" data-deltask="'+esc(t.id)+'" title="删除该任务及文件">🗑</button>';
+    if (!isTr) {
+      h += '<button class="folder-btn'+(openState?' open':'')+'" data-folder="'+esc(t.id)+'">'+(openState?'收起':'展开文件')+'</button>';
+      h += '<button class="del-btn" data-deltask="'+esc(t.id)+'" title="删除该任务及文件">🗑</button>';
+    }
     h += '</div></div>';
+    // 把 AList 的报错原文摊开：卡住时这行往往就是唯一有用的线索
+    if (t.error) h += '<div class="task-err">'+esc(String(t.error))+'</div>';
+    else if (!isTr && done && !hasFiles) h += '<div class="task-err warn">下载已完成，但 downloads/ 里没扫到视频文件。'
+      + '常见原因：BT 还在做种导致转存没触发（上面若无「转存」任务即是），或文件已被到期清理。</div>';
     if (hasFiles && taskFiles[t.id]._open) {
       h += '<div class="task-files">';
       taskFiles[t.id].forEach(function(f){
@@ -438,7 +470,17 @@ function renderFileList(){
   var existing = document.getElementById('file-section');
   if (existing) existing.remove();
   collectVideos(function(res){
-    if (!res) return;
+    if (!res) {
+      // 目录列表读不到（转码服务没起来 / 登录态失效）。以前这里静默留白，
+      // 看起来就像「没有文件」，很误导人，所以必须明说
+      var w = document.createElement('div');
+      w.id = 'file-section';
+      w.className = 'banner';
+      w.textContent = '读不到下载目录。目录列表需要转码服务(caster)鉴权，'
+        + '请在服务器上执行 bash menu.sh status 看 yun-caster 是否在运行。';
+      document.getElementById('tasks-view').appendChild(w);
+      return;
+    }
     var groups = [];
     Object.keys(res.dirs).sort().forEach(function(dn){
       if (res.dirs[dn].length) groups.push({title:'📁 '+dn, files:res.dirs[dn]});
