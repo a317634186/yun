@@ -36,6 +36,7 @@ services:
       - PREWARM_SEGMENTS=${PREWARM_SEGMENTS:-3}
       # —— 清理策略 ——
       - RETENTION_HOURS=${RETENTION_HOURS:-1}    # 下载文件保留小时数，0 = 永不自动删
+      - KEEP_PLAYING_PROTECT=${KEEP_PLAYING_PROTECT:-1}  # 0 = 到点就删，不管在不在看
       - MAX_DISK_PERCENT=${MAX_DISK_PERCENT:-90} # 磁盘超过此占用率就先删最旧的
       - CACHE_MAX_MB=${CACHE_MAX_MB:-4096}       # 转码分片缓存上限
       - CLEAN_INTERVAL=${CLEAN_INTERVAL:-300}

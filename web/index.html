@@ -120,7 +120,8 @@ video::cue{font-size:20px;background:rgba(0,0,0,.55);text-shadow:0 1px 2px #000}
 <script>
 'use strict';
 var DL = '/downloads';
-var VIDEO_RE = /\.(mp4|mkv|webm|avi|mov|ts|flv|m2ts|wmv|mpg|mpeg)$/i;
+// 尽量把常见容器都认出来；认不出来的文件不会出现在列表里，所以宁可宽一点
+var VIDEO_RE = /\.(mp4|m4v|mkv|webm|avi|mov|ts|mts|m2ts|flv|f4v|wmv|asf|mpg|mpeg|mpv|rmvb|rm|3gp|3g2|ogv|ogm|vob|divx|mxf)$/i;
 var token = localStorage.getItem('yun_token') || '';
 var auth = null;
 try { auth = JSON.parse(localStorage.getItem('yun_auth') || 'null'); } catch(e){}
@@ -430,29 +431,41 @@ function refreshFiles(){
   });
 }
 
+/* 「全部视频文件」：按文件夹分组列出下载目录里的每一个视频，每行都有播放按钮。
+   任务分组靠的是名称匹配，多个种子同时下载时可能认错；这里是不依赖任务的兜底入口，
+   多文件种子里的任何一集都保证能在这儿找到并播放。 */
 function renderFileList(){
   var existing = document.getElementById('file-section');
   if (existing) existing.remove();
-  lsDir(DL).then(function(items){
-    if (!items) return;
-    var rootFiles = items.filter(function(f){ return !f.is_dir && VIDEO_RE.test(f.name); });
-    if (!rootFiles.length) return;
+  collectVideos(function(res){
+    if (!res) return;
+    var groups = [];
+    Object.keys(res.dirs).sort().forEach(function(dn){
+      if (res.dirs[dn].length) groups.push({title:'📁 '+dn, files:res.dirs[dn]});
+    });
+    if (res.root.length) groups.push({title:'独立视频文件', files:res.root});
+    if (!groups.length) return;
+
+    var total = groups.reduce(function(n,g){ return n + g.files.length; }, 0);
     var sec = document.createElement('div');
     sec.id = 'file-section';
     sec.style.cssText = 'margin-top:18px';
-    sec.innerHTML = '<h3 style="font-size:13px;color:#7c8dab;margin-bottom:8px;font-weight:600">独立视频文件</h3>';
-    rootFiles.forEach(function(f){
-      var p = DL+'/'+f.name;
-      var playing = currentPlayPath === p;
-      var row = document.createElement('div');
-      row.className = 'file-row';
-      row.innerHTML = '<div class="fname">'+esc(f.name)+(playing?'<span class="now-playing">▶ 播放中</span>':'')+'</div>'
-        +'<div class="fsize">'+fmtSize(f.size)+'</div>'
-        +'<div class="fstatus">'+remainText(f)+'</div>'
-        +'<button class="play-btn" data-play="'+esc(p)+'">▶ 播放</button>'
-        +'<button class="del-btn" data-del="'+esc(p)+'" title="删除文件">🗑</button>';
-      sec.appendChild(row);
+    var h = '<h3 style="font-size:13px;color:#7c8dab;margin-bottom:8px;font-weight:600">'
+          + '全部视频文件（' + total + '）</h3>';
+    groups.forEach(function(g){
+      h += '<div style="font-size:12px;color:#5a6b8c;margin:10px 0 2px">'+esc(g.title)+'</div>';
+      g.files.forEach(function(f){
+        var playing = currentPlayPath === f.path;
+        h += '<div class="file-row">'
+          + '<div class="fname">'+esc(f.name)+(playing?'<span class="now-playing">▶ 播放中</span>':'')+'</div>'
+          + '<div class="fsize">'+fmtSize(f.size)+'</div>'
+          + '<div class="fstatus">'+remainText(f)+'</div>'
+          + '<button class="play-btn" data-play="'+esc(f.path)+'">▶ 播放</button>'
+          + '<button class="del-btn" data-del="'+esc(f.path)+'" title="删除文件">🗑</button>'
+          + '</div>';
+      });
     });
+    sec.innerHTML = h;
     document.getElementById('tasks-view').appendChild(sec);
     sec.querySelectorAll('[data-play]').forEach(function(b){ b.onclick=function(){ play(b.getAttribute('data-play')); }; });
     sec.querySelectorAll('[data-del]').forEach(function(b){ b.onclick=function(){ delFile(b.getAttribute('data-del')); }; });

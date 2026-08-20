@@ -76,6 +76,8 @@ TICKET_TTL = _env_int('TICKET_TTL', 43200)         # 播放票据有效期（秒
 AUTH_ENFORCE = _env('AUTH_ENFORCE', '1') != '0'
 
 RETENTION_HOURS = _env_float('RETENTION_HOURS', 1)  # 0 = 不自动删下载文件
+# 1 = 最近还在播的文件即使到期也先留着（看到一半不会被删）；0 = 到点就删，不留情
+KEEP_PLAYING_PROTECT = _env('KEEP_PLAYING_PROTECT', '1') != '0'
 CLEAN_INTERVAL = max(30, _env_int('CLEAN_INTERVAL', 300))
 MAX_DISK_PERCENT = _env_int('MAX_DISK_PERCENT', 90)
 CACHE_MAX_MB = _env_int('CACHE_MAX_MB', 4096)
@@ -657,6 +659,8 @@ def _top_entries():
 
 def _recently_played(path):
     """整个条目里只要有文件最近被播过，就整体留着（正在看的片子不能删）。"""
+    if not KEEP_PLAYING_PROTECT:
+        return False
     keep_window = max(RETENTION_HOURS * 3600, 900)
     now = time.time()
     if os.path.isfile(path):
@@ -878,6 +882,13 @@ class Handler(BaseHTTPRequestHandler):
                 and not check_ticket(media_path, self._one(q, 'pt', '')):
             return self._err(401, '请先登录')
         info = probe_info(media_path)
+        # 探测阶段就开始烤开头几片：用户点下「播放」时往往已经烤好，开播明显更快
+        if info['mode'] == 'hls' and info['duration'] > 0:
+            try:
+                prewarm(media_path, resolve(media_path), -1, info['default_audio'],
+                        info['default_height'], info['duration'])
+            except Exception:
+                pass
         return self._json(200, {'code': 200, 'data': info})
 
     def h_playlist(self, q):
