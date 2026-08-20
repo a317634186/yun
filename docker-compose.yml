@@ -25,6 +25,12 @@ services:
       - CACHE_DIR=/cache
       - MOUNT_PREFIX=/downloads
       - STREAM_SECRET=${STREAM_SECRET:-}
+      # —— 下载：直连 aria2，绕开 AList「临时目录 + 转存」两段式 ——
+      - ARIA2_URL=${ARIA2_URL:-http://alist:6800/jsonrpc}
+      - ARIA2_SECRET=${ARIA2_SECRET:-}
+      - ARIA2_DIR=${ARIA2_DIR:-/root/Download}   # aria2 容器内看到的下载目录
+      - SEED_TIME=${SEED_TIME:-0}                # 0 = 下完不做种，任务才会真正结束
+      - BT_PRIORITIZE_PIECE=${BT_PRIORITIZE_PIECE:-head=32M,tail=32M}
       # —— 播放质量与算力 ——
       - MAX_HEIGHT=${MAX_HEIGHT:-720}            # 转码高度上限，VPS 越弱就调越低（480）
       - VIDEO_QUALITY=${VIDEO_QUALITY:-23}       # 画质，数字越小越清晰越吃 CPU（18-28）

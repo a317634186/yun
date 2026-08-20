@@ -92,6 +92,17 @@ DIRECT_AUDIO = {'aac', 'mp3', 'opus', 'vorbis'}
 # 能转成 WebVTT 的文本字幕（图形字幕 PGS/VobSub 转不了，直接不展示）
 TEXT_SUB_CODECS = {'subrip', 'srt', 'ass', 'ssa', 'mov_text', 'webvtt', 'text', 'stl', 'subviewer'}
 SIDECAR_SUB_EXT = {'.srt', '.ass', '.ssa', '.vtt'}   # .sub 是图形字幕，转不成 WebVTT，不展示
+VIDEO_EXT = {'.mp4', '.m4v', '.mkv', '.webm', '.avi', '.mov', '.ts', '.mts', '.m2ts',
+             '.flv', '.f4v', '.wmv', '.asf', '.mpg', '.mpeg', '.mpv', '.rmvb', '.rm',
+             '.3gp', '.3g2', '.ogv', '.ogm', '.vob', '.divx', '.mxf'}
+
+# ---- aria2：下载直接交给它，不再经 AList 的「下载到临时目录 + 转存」两段式 ----
+ARIA2_URL = _env('ARIA2_URL', 'http://alist:6800/jsonrpc')
+ARIA2_SECRET = _env('ARIA2_SECRET', '')
+# aria2 容器内看到的下载目录。它和本服务的 MEDIA_ROOT 是同一个宿主目录的两个挂载点
+ARIA2_DIR = _env('ARIA2_DIR', '/root/Download').rstrip('/')
+SEED_TIME = _env('SEED_TIME', '0')          # 0 = 下完不做种，任务才会真正结束
+PRIORITIZE = _env('BT_PRIORITIZE_PIECE', 'head=32M,tail=32M')  # 先抓头尾，边下边播的关键
 
 
 def log(*a):
@@ -231,6 +242,164 @@ def touch(media_path):
 def touched_at(media_path):
     with _touch_lock:
         return _touched.get(media_path, 0)
+
+
+# ============================== aria2 下载 ==============================
+# 直接下到 downloads/，不再走 AList 的「下到临时目录 → 转存」两段式：
+# 文件从第一秒就落在播放器能读到的位置，边下边播才成立；
+# 任务的文件清单也由 aria2 直接给出，不用再拿任务名去猜文件夹。
+
+
+class Aria2Error(Exception):
+    pass
+
+
+_rpc_seq = 0
+_rpc_lock = threading.Lock()
+
+TELL_KEYS = ['gid', 'status', 'totalLength', 'completedLength', 'downloadSpeed',
+             'errorCode', 'errorMessage', 'dir', 'files', 'bittorrent',
+             'numSeeders', 'connections', 'followedBy']
+
+
+def aria2_rpc(method, params=None, timeout=20):
+    global _rpc_seq
+    with _rpc_lock:
+        _rpc_seq += 1
+        rid = 'yun-%d' % _rpc_seq
+    p = list(params or [])
+    if ARIA2_SECRET:
+        p.insert(0, 'token:' + ARIA2_SECRET)
+    body = json.dumps({'jsonrpc': '2.0', 'id': rid, 'method': method, 'params': p})
+    req = urllib.request.Request(ARIA2_URL, data=body.encode('utf-8'),
+                                 headers={'Content-Type': 'application/json'})
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            data = json.loads(r.read().decode('utf-8', 'replace'))
+    except Exception as e:
+        raise Aria2Error('连不上 aria2（%s）：%s' % (ARIA2_URL, e))
+    if isinstance(data, dict) and data.get('error'):
+        raise Aria2Error(str((data['error'] or {}).get('message') or data['error']))
+    return data.get('result') if isinstance(data, dict) else data
+
+
+def aria2_to_media(p):
+    """aria2 报的容器内路径 → 前端用的 /downloads/... ；不在我们目录里的返回 None。"""
+    if not p:
+        return None
+    p = p.replace('\\', '/')
+    if p == ARIA2_DIR:
+        return MOUNT
+    if p.startswith(ARIA2_DIR + '/'):
+        return MOUNT + '/' + p[len(ARIA2_DIR) + 1:]
+    return None
+
+
+def aria2_add(url):
+    opts = {
+        'dir': ARIA2_DIR,
+        'seed-time': SEED_TIME,              # 0 = 下完不做种，任务才会真正结束
+        'bt-prioritize-piece': PRIORITIZE,   # 先抓文件头尾：moov/索引早到手才能边下边播
+        'bt-save-metadata': 'true',
+    }
+    return aria2_rpc('aria2.addUri', [[url], opts])
+
+
+def _task_name(t):
+    info = (t.get('bittorrent') or {}).get('info') or {}
+    if info.get('name'):
+        return info['name']
+    files = t.get('files') or []
+    if files:
+        mp = aria2_to_media(files[0].get('path') or '')
+        if mp and mp != MOUNT:
+            rel = mp[len(MOUNT) + 1:]
+            return rel.split('/')[0] or os.path.basename(rel)
+        return os.path.basename(files[0].get('path') or '') or '未命名任务'
+    return '（正在获取种子信息…）'
+
+
+def _task_view(t):
+    total = int(t.get('totalLength') or 0)
+    done = int(t.get('completedLength') or 0)
+    videos = []
+    for f in t.get('files') or []:
+        mp = aria2_to_media(f.get('path') or '')
+        if not mp or mp == MOUNT:
+            continue
+        name = os.path.basename(mp)
+        if os.path.splitext(name)[1].lower() not in VIDEO_EXT:
+            continue
+        flen = int(f.get('length') or 0)
+        fdone = int(f.get('completedLength') or 0)
+        videos.append({
+            'path': mp, 'name': name, 'size': flen, 'done': fdone,
+            'pct': round(fdone * 100.0 / flen, 1) if flen else 0,
+            'selected': f.get('selected') != 'false',
+            'exists': os.path.isfile(os.path.join(_REAL_ROOT, mp[len(MOUNT) + 1:])),
+        })
+    err = t.get('errorMessage') or ''
+    code = str(t.get('errorCode') or '0')
+    if code not in ('0', '') and not err:
+        err = 'aria2 错误码 %s' % code
+    return {
+        'gid': t.get('gid'), 'name': _task_name(t), 'status': t.get('status') or '',
+        'total': total, 'completed': done,
+        'progress': round(done * 100.0 / total, 1) if total else 0,
+        'speed': int(t.get('downloadSpeed') or 0),
+        'seeders': int(t.get('numSeeders') or 0),
+        'connections': int(t.get('connections') or 0),
+        'error': err,
+        'in_dir': aria2_to_media(t.get('dir') or '') is not None,
+        'videos': videos,
+    }
+
+
+def aria2_list():
+    raw = []
+    raw += aria2_rpc('aria2.tellActive', [TELL_KEYS]) or []
+    raw += aria2_rpc('aria2.tellWaiting', [0, 200, TELL_KEYS]) or []
+    raw += aria2_rpc('aria2.tellStopped', [0, 200, TELL_KEYS]) or []
+    out, seen = [], set()
+    for t in raw:
+        gid = t.get('gid')
+        if not gid or gid in seen:
+            continue
+        # 磁力要先下种子信息，那个中间任务会用 followedBy 指向真正的下载任务，跳过它
+        if t.get('followedBy'):
+            continue
+        seen.add(gid)
+        out.append(_task_view(t))
+    return out
+
+
+def aria2_remove(gid, delete_files=True):
+    info = None
+    try:
+        info = aria2_rpc('aria2.tellStatus', [gid, TELL_KEYS])
+    except Aria2Error:
+        pass
+    for m in ('aria2.forceRemove', 'aria2.removeDownloadResult'):
+        try:
+            aria2_rpc(m, [gid])
+        except Aria2Error:
+            pass          # 已经停了/已经清了都算成功，继续删文件
+    removed = []
+    if delete_files and info:
+        tops = set()
+        for f in info.get('files') or []:
+            mp = aria2_to_media(f.get('path') or '')
+            if not mp or mp == MOUNT:
+                continue
+            tops.add(mp[len(MOUNT) + 1:].split('/')[0])
+        for top in tops:
+            target = os.path.realpath(os.path.join(_REAL_ROOT, top))
+            if target == _REAL_ROOT or not target.startswith(_REAL_ROOT + os.sep):
+                continue
+            if _remove_entry(target):
+                removed.append(top)
+            _unlink(target + '.aria2')
+    return removed
 
 
 # ============================== 探测 ==============================
@@ -448,8 +617,13 @@ def variant_dir(media_path, full, audio_index, height):
     """把文件大小算进缓存键：边下边播时文件长大就换一套分片，避免拿到半截数据的旧片。
     分片时长与画质也进键，改了设置不会复用对不上的旧分片。"""
     st = os.stat(full)
-    raw = '%s|%d|%s|%s|%d|%s|%s' % (media_path, st.st_size, audio_index, height,
-                                    SEG, QUALITY, VIDEO_ENCODER)
+    # 还在下载的文件（aria2 会预分配到最终大小，只是内容有空洞），单靠大小分不出新旧，
+    # 所以额外按分钟分桶：从空洞里转出来的坏分片最多一分钟就自动作废
+    bucket = 0
+    if time.time() - st.st_mtime < 120:
+        bucket = int(time.time() // 60)
+    raw = '%s|%d|%s|%s|%d|%s|%s|%d' % (media_path, st.st_size, audio_index, height,
+                                       SEG, QUALITY, VIDEO_ENCODER, bucket)
     key = hashlib.sha1(raw.encode('utf-8')).hexdigest()[:20]
     return os.path.join(HLS_CACHE, key)
 
@@ -836,11 +1010,46 @@ class Handler(BaseHTTPRequestHandler):
                 return self.h_auth_play()
             if path == '/auth/api':
                 return self.h_auth_api()
+            if path == '/dl/list':
+                return self.h_dl_list()
             return self._err(404, '没有这个接口')
+        except Aria2Error as e:
+            return self._err(503, str(e))
         except BadPath as e:
             return self._err(400, str(e))
         except Exception as e:
             log('处理 %s 出错: %r' % (self.path, e))
+            return self._err(500, '服务内部错误：%s' % e)
+
+    def do_POST(self):
+        try:
+            n = int(self.headers.get('Content-Length') or 0)
+        except ValueError:
+            n = 0
+        raw = self.rfile.read(n) if n > 0 else b''
+        try:
+            body = json.loads(raw.decode('utf-8', 'replace')) if raw else {}
+        except ValueError:
+            body = {}
+        if not isinstance(body, dict):
+            body = {}
+        try:
+            path = urllib.parse.urlsplit(self.path).path
+            if not alist_authorized(self.headers.get('Authorization', '')):
+                return self._err(401, '请先登录')
+            if path == '/dl/add':
+                return self.h_dl_add(body)
+            if path == '/dl/remove':
+                return self.h_dl_remove(body)
+            if path == '/dl/rmfile':
+                return self.h_dl_rmfile(body)
+            return self._err(404, '没有这个接口')
+        except Aria2Error as e:
+            return self._err(503, str(e))
+        except BadPath as e:
+            return self._err(400, str(e))
+        except Exception as e:
+            log('处理 POST %s 出错: %r' % (self.path, e))
             return self._err(500, '服务内部错误：%s' % e)
 
     def _one(self, q, key, default=None):
@@ -872,8 +1081,12 @@ class Handler(BaseHTTPRequestHandler):
                            'used_percent': round((u.total - u.free) * 100.0 / u.total, 1)}
         except OSError:
             pass
+        try:
+            out['aria2'] = (aria2_rpc('aria2.getVersion', [], timeout=8) or {}).get('version') or 'ok'
+        except Aria2Error as e:
+            out['aria2'] = '不可用（%s）' % e
         out.update({'encoder': VIDEO_ENCODER, 'hwaccel': HWACCEL, 'jobs': JOBS,
-                    'auth': AUTH_ENFORCE})
+                    'auth': AUTH_ENFORCE, 'aria2_dir': ARIA2_DIR})
         return self._json(200, out)
 
     def h_probe(self, q):
@@ -945,6 +1158,39 @@ class Handler(BaseHTTPRequestHandler):
                 return self._err(400, '缺少字幕轨编号')
             body = extract_vtt(full, idx)
         return self._send(200, body, 'text/vtt; charset=utf-8')
+
+    # -------- 下载（aria2 直连）--------
+
+    def h_dl_add(self, body):
+        url = str(body.get('url') or '').strip()
+        if not url:
+            return self._err(400, '请提供磁力链接或种子地址')
+        if not re.match(r'^(magnet:|https?://|ftp://)', url, re.I):
+            return self._err(400, '只支持 magnet: 开头或 http(s)/ftp 的链接')
+        gid = aria2_add(url)
+        log('新任务', gid, url[:80])
+        return self._json(200, {'code': 200, 'data': {'gid': gid}})
+
+    def h_dl_list(self):
+        if not alist_authorized(self.headers.get('Authorization', '')):
+            return self._err(401, '请先登录')
+        return self._json(200, {'code': 200, 'data': aria2_list()})
+
+    def h_dl_remove(self, body):
+        gid = str(body.get('gid') or '').strip()
+        if not gid:
+            return self._err(400, '缺少任务号')
+        removed = aria2_remove(gid, body.get('delete_files') is not False)
+        log('删除任务', gid, '文件:', ','.join(removed) or '无')
+        return self._json(200, {'code': 200, 'data': {'removed': removed}})
+
+    def h_dl_rmfile(self, body):
+        """删单个文件。以前这一步走 AList /fs/remove，得先挂好存储才管用；直接删更可靠。"""
+        full = resolve(str(body.get('path') or ''))
+        if _remove_entry(full):
+            _unlink(full + '.aria2')
+            return self._json(200, {'code': 200})
+        return self._err(500, '删除失败（权限或文件被占用）')
 
     def h_hlsjs(self):
         if os.path.isfile(VENDOR_HLSJS):

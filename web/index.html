@@ -58,6 +58,7 @@ button.del-btn:hover{background:#5a2020}
 .toast{position:fixed;left:50%;transform:translateX(-50%);bottom:28px;background:#243350;border:1px solid #33456b;color:#dbe4f0;padding:10px 18px;border-radius:10px;opacity:0;transition:opacity .3s;pointer-events:none;z-index:9}
 .toast.show{opacity:1}
 .now-playing{color:#4f8cff;font-size:11px;margin-left:6px}
+.task-meta{padding:0 14px 10px 46px;color:#7c8dab;font-size:12px}
 .task-err{padding:8px 14px;border-top:1px solid #1f2a3f;color:#ff9b9b;font-size:12px;line-height:1.5;background:#1e1418}
 .task-err.warn{color:#e0b155;background:#1c1810}
 .stage{display:inline-block;background:#243350;color:#8ea2c4;font-size:11px;padding:1px 6px;border-radius:4px;margin-right:6px}
@@ -219,40 +220,99 @@ function loadSrvCfg(){
   }).catch(function(){ /* 转码服务没起来时不打扰用户，播放时自然会报错 */ });
 }
 
-/* ===== 添加下载 ===== */
+/* ===== 下载：默认走 aria2 直连（一段式，直接落到 downloads/，可边下边播）
+   aria2 不可达时自动回退到 AList 离线下载（两段式，得等转存完才能播） ===== */
+var dlMode = 'aria2';
+var dlModeAt = 0;
+
+function apiPost(url, body, retry){
+  var h = {'Content-Type':'application/json'};
+  if (token) h.Authorization = token;
+  return fetch(url, {method:'POST', headers:h, body:JSON.stringify(body||{})})
+    .then(function(r){
+      if (r.status === 401 && auth && !retry) {
+        return doLogin(auth.u, auth.p, true).then(function(){ return apiPost(url, body, true); });
+      }
+      return r.json();
+    });
+}
+
 function addDownload(){
   var el = document.getElementById('in-magnet');
   var url = el.value.trim();
   if (!url) { toast('请先粘贴链接'); return; }
-  api('/fs/add_offline_download', {urls:[url], path:DL, tool:'aria2', delete_policy:'delete_never'}).then(function(j){
-    if (j.code === 200) { el.value=''; toast('已添加，开始下载'); taskFiles={}; refreshTasks(); }
-    else toast('添加失败：'+(j.message||'链接不合法'));
-  });
+  var okAria2 = function(){ el.value=''; toast('已添加，直接下到播放目录'); refreshTasks(); };
+  var viaAlist = function(msg){
+    api('/fs/add_offline_download', {urls:[url], path:DL, tool:'aria2', delete_policy:'delete_never'})
+      .then(function(j){
+        if (j.code === 200) { el.value=''; taskFiles={}; scanCache=null;
+          toast('已添加（AList 离线下载，需等转存完才能播）'); refreshTasks(); }
+        else toast('添加失败：'+(j.message||msg||'链接不合法'));
+      });
+  };
+  if (dlMode !== 'aria2') return viaAlist();
+  apiPost('/stream/dl/add', {url:url}).then(function(j){
+    if (j && j.code === 200) return okAria2();
+    if (j && j.code === 503) { dlMode='alist'; dlModeAt=Date.now(); return viaAlist(j.message); }
+    toast('添加失败：'+((j&&j.message)||'链接不合法'));
+  }).catch(function(){ dlMode='alist'; dlModeAt=Date.now(); viaAlist(); });
 }
 
 /* ===== 任务列表 ===== */
-var lastRaw = [];
+var lastRaw = [];        // 统一后的任务：{id,name,progress,stage,done,err,speed,files,kind,...}
+var expanded = {};       // id -> false 表示手动收起过；默认展开
+
+function statusText(s){
+  return ({active:'下载中', waiting:'排队中', paused:'已暂停',
+           complete:'已完成', error:'出错', removed:'已移除'})[s] || (s||'');
+}
+
 function refreshTasks(){
-  // 也要看「转存」任务：aria2 是先下到 AList 临时目录，再由转存任务搬进 downloads/。
-  // 只看下载任务的话，卡在转存这一步会完全看不出来。
+  if (dlMode !== 'aria2') {
+    if (Date.now() - dlModeAt > 60000) dlMode = 'aria2';   // 隔一分钟再试试直连
+    else return refreshTasksViaAlist();
+  }
+  authGet('/stream/dl/list').then(function(j){
+    if (!j || j.code !== 200 || !j.data) throw new Error((j && j.message) || 'aria2 不可用');
+    lastRaw = j.data.map(function(t){
+      return {id:t.gid, name:t.name, progress:t.progress, stage:statusText(t.status),
+              done:t.status==='complete', err:t.error, speed:t.speed, conns:t.connections,
+              seeders:t.seeders, files:t.videos||[], kind:'aria2', inDir:t.in_dir,
+              status:t.status, total:t.total};
+    });
+    renderTasks();
+  }).catch(function(e){
+    if (dlMode === 'aria2') {
+      dlMode = 'alist'; dlModeAt = Date.now();
+      toast('aria2 直连不可用，暂时回退 AList：' + (e.message||''));
+    }
+    refreshTasksViaAlist();
+  });
+}
+
+/* 回退路径：AList 的任务模型不给文件清单，只能靠任务名去猜文件夹（不可靠），
+   而且要等「转存」任务把文件搬进 downloads/ 才播得了 */
+function refreshTasksViaAlist(){
   Promise.all([
     api('/admin/task/offline_download/undone'),
     api('/admin/task/offline_download/done'),
     api('/admin/task/offline_download_transfer/undone'),
     api('/admin/task/offline_download_transfer/done')
   ]).then(function(rs){
-    var mk = function(list, stage, kind){
-      return (list||[]).map(function(t){ t._stage=stage; t._kind=kind; return t; });
+    var mk = function(list, stage, kind, done){
+      return (list||[]).map(function(t){
+        return {id:t.id, name:taskName(t), progress:+t.progress||0, stage:stage,
+                done:done, err:t.error, files:null, kind:kind, _al:t};
+      });
     };
-    var dl = mk(rs[0].data, '下载', 'dl').concat(mk(rs[1].data, '已完成', 'dl'));
-    var tr = mk(rs[2].data, '转存中', 'tr').concat(mk(rs[3].data, '转存完成', 'tr'));
-    var tasks = dl.concat(tr);
-    lastRaw = tasks;
-    tasks.forEach(function(t){ taskMap[t.id] = t; });
-    // 自动扫描：无文件缓存的任务立即扫；未完成的任务每 15 秒重扫（发现新视频）
+    var dl = mk(rs[0].data, '下载中', 'al', false).concat(mk(rs[1].data, '已完成', 'al', true));
+    var tr = mk(rs[2].data, '转存中', 'tr', false).concat(mk(rs[3].data, '转存完成', 'tr', true));
+    lastRaw = dl.concat(tr);
+    lastRaw.forEach(function(t){ taskMap[t.id] = t._al || t; });
     dl.forEach(function(t){
+      t.files = taskFiles[t.id] || null;
       if (!taskFiles[t.id] || (!taskFiles[t.id].length && Date.now()-(scanTs[t.id]||0) > 15000)) assignFiles(t.id);
-      else if (t._stage !== '已完成' && Date.now()-(scanTs[t.id]||0) > 15000) assignFiles(t.id);
+      else if (!t.done && Date.now()-(scanTs[t.id]||0) > 15000) assignFiles(t.id);
     });
     renderTasks();
   });
@@ -279,35 +339,52 @@ function renderTasks(){
   var h = '';
   lastRaw.forEach(function(t){
     var prog = Math.round(+t.progress || 0);
-    var isTr = t._kind === 'tr';
-    var done = t._stage === '已完成' || t._stage === '转存完成';
-    var name = taskName(t);
-    var hasFiles = taskFiles[t.id] && taskFiles[t.id].length;
-    var openState = hasFiles && taskFiles[t.id]._open;
+    var isTr = t.kind === 'tr';
+    var files = t.files || [];
+    var open = files.length > 0 && expanded[t.id] !== false;
     h += '<div class="task" data-tid="'+esc(t.id)+'">'
       + '<div class="task-head">'
-      + '<div class="ico">'+(t.error?'❌':(done?'✅':(isTr?'📦':'⬇️')))+'</div>'
-      + '<div class="name" title="'+esc(name)+'">'+(isTr?'<span class="stage">转存</span>':'')+esc(name)+'</div>'
+      + '<div class="ico">'+(t.err?'❌':(t.done?'✅':(isTr?'📦':(t.status==='paused'?'⏸':'⬇️'))))+'</div>'
+      + '<div class="name" title="'+esc(t.name)+'">'+(isTr?'<span class="stage">转存</span>':'')+esc(t.name)+'</div>'
       + '<div class="bar-wrap"><div class="bar"><i style="width:'+prog+'%"></i></div></div>'
-      + '<div class="pct">'+(done?'100%':prog+'%')+'</div>'
+      + '<div class="pct">'+prog+'%</div>'
       + '<div class="acts">';
-    if (!isTr) {
-      h += '<button class="folder-btn'+(openState?' open':'')+'" data-folder="'+esc(t.id)+'">'+(openState?'收起':'展开文件')+'</button>';
-      h += '<button class="del-btn" data-deltask="'+esc(t.id)+'" title="删除该任务及文件">🗑</button>';
+    if (files.length) {
+      h += '<button class="folder-btn'+(open?' open':'')+'" data-folder="'+esc(t.id)+'">'
+         + (open?'收起':'展开 '+files.length+' 个视频')+'</button>';
+    } else if (!isTr && t.kind !== 'aria2') {
+      // aria2 给的文件清单是权威的：它说没有视频就是还没有，不用再让用户去扫盘
+      h += '<button class="folder-btn" data-folder="'+esc(t.id)+'">展开文件</button>';
     }
+    if (!isTr) h += '<button class="del-btn" data-deltask="'+esc(t.id)+'" title="删除任务及文件">🗑</button>';
     h += '</div></div>';
-    // 把 AList 的报错原文摊开：卡住时这行往往就是唯一有用的线索
-    if (t.error) h += '<div class="task-err">'+esc(String(t.error))+'</div>';
-    else if (!isTr && done && !hasFiles) h += '<div class="task-err warn">下载已完成，但 downloads/ 里没扫到视频文件。'
-      + '常见原因：BT 还在做种导致转存没触发（上面若无「转存」任务即是），或文件已被到期清理。</div>';
-    if (hasFiles && taskFiles[t.id]._open) {
+
+    var bits = [t.stage];
+    if (t.speed) bits.push(fmtSize(t.speed)+'/s');
+    if (t.conns) bits.push(t.conns+' 连接');
+    if (t.seeders) bits.push(t.seeders+' 做种');
+    if (t.total) bits.push(fmtSize(t.total));
+    h += '<div class="task-meta">'+esc(bits.filter(Boolean).join(' · '))+'</div>';
+
+    if (t.err) h += '<div class="task-err">'+esc(String(t.err))+'</div>';
+    else if (t.kind === 'aria2' && !t.inDir) h += '<div class="task-err warn">这个任务不是下到播放目录的'
+      + '（旧流程提交的会先下到 AList 临时目录），下载完成转存后才能播。</div>';
+    else if (t.kind === 'al' && t.done && !files.length) h += '<div class="task-err warn">'
+      + '下载已完成，但 downloads/ 里没扫到视频。多半是 BT 还在做种导致转存没触发。'
+      + '这正是 aria2 直连要解决的问题——转码服务恢复后新任务不会再有这一步。</div>';
+
+    if (open) {
       h += '<div class="task-files">';
-      taskFiles[t.id].forEach(function(f){
+      files.forEach(function(f){
         var playing = currentPlayPath === f.path;
+        var pct = (f.pct == null) ? null : Math.round(f.pct);
+        var st;
+        if (pct != null) st = pct >= 100 ? '已完成' : ('已下 '+pct+'%');
+        else st = (t.done?'':'下载中 ') + remainText(f);
         h += '<div class="file-row">'
           + '<div class="fname">'+esc(f.name)+(playing?'<span class="now-playing">▶ 播放中</span>':'')+'</div>'
           + '<div class="fsize">'+fmtSize(f.size)+'</div>'
-          + '<div class="fstatus">'+(done?'':'下载中 ')+remainText(f)+'</div>'
+          + '<div class="fstatus">'+st+'</div>'
           + '<button class="play-btn" data-play="'+esc(f.path)+'">▶ 播放</button>'
           + '<button class="del-btn" data-del="'+esc(f.path)+'" title="删除文件">🗑</button>'
           + '</div>';
@@ -317,7 +394,6 @@ function renderTasks(){
     h += '</div>';
   });
   box.innerHTML = h;
-  // bind events
   box.querySelectorAll('[data-folder]').forEach(function(b){ b.onclick=function(){ toggleFolder(b.getAttribute('data-folder')); }; });
   box.querySelectorAll('[data-play]').forEach(function(b){ b.onclick=function(){ play(b.getAttribute('data-play')); }; });
   box.querySelectorAll('[data-del]').forEach(function(b){ b.onclick=function(){ delFile(b.getAttribute('data-del')); }; });
@@ -328,18 +404,46 @@ function renderTasks(){
 function delFile(path){
   var name = path.split('/').pop();
   if (!confirm('删除文件「'+name+'」？\n（播放记录会保留）')) return;
-  var dir = path.slice(0, path.length - name.length - 1) || DL;
-  api('/fs/remove', {dir:dir, names:[name]}).then(function(j){
+  var after = function(ok, msg){
     delete knownVideos[path];
     scanCache = null;
-    toast(j.code===200?'已删除':'删除失败：'+(j.message||''));
+    toast(ok ? '已删除' : ('删除失败：'+(msg||'')));
     refreshTasks(); renderFileList();
+  };
+  // 先让 caster 直接删（不依赖 AList 存储挂载），不行再退回 AList
+  apiPost('/stream/dl/rmfile', {path:path}).then(function(j){
+    if (j && j.code === 200) return after(true);
+    var dir = path.slice(0, path.length - name.length - 1) || DL;
+    api('/fs/remove', {dir:dir, names:[name]}).then(function(j2){
+      after(j2.code === 200, j2.message || (j && j.message));
+    });
+  }).catch(function(){
+    var dir = path.slice(0, path.length - name.length - 1) || DL;
+    api('/fs/remove', {dir:dir, names:[name]}).then(function(j2){ after(j2.code === 200, j2.message); });
   });
 }
+
 function delTask(tid){
-  var t = taskMap[tid] || {};
-  var tname = taskName(t);
+  var t = null;
+  lastRaw.forEach(function(x){ if (x.id === tid) t = x; });
+  var tname = t ? t.name : tid;
   if (!confirm('删除「'+tname+'」的任务及文件？\n（播放记录会保留）')) return;
+  var done = function(){
+    delete taskFiles[tid]; delete expanded[tid];
+    scanCache = null;
+    toast('已删除');
+    refreshTasks(); renderFileList();
+  };
+  if (t && t.kind === 'aria2') {
+    apiPost('/stream/dl/remove', {gid:tid, delete_files:true})
+      .then(done).catch(function(){ toast('删除失败'); });
+    return;
+  }
+  delTaskViaAlist(tid, tname, done);
+}
+
+/* AList 回退路径：它不告诉我们任务对应哪个文件夹，只能按名字猜着删 */
+function delTaskViaAlist(tid, tname, done){
   api('/fs/list', {path:DL, page:1, per_page:200, refresh:true}).then(function(j){
     var items = (j.code===200 && j.data && j.data.content) ? j.data.content : [];
     var dirs = items.filter(function(f){ return f.is_dir; });
@@ -350,10 +454,7 @@ function delTask(tid){
     var finish = function(){
       api('/admin/task/offline_download/delete?tid='+encodeURIComponent(tid), {});
       api('/admin/task/offline_download_transfer/delete?tid='+encodeURIComponent(tid), {});
-      delete taskFiles[tid];
-      scanCache = null;
-      toast('已删除');
-      refreshTasks(); renderFileList();
+      done();
     };
     if (del) api('/fs/remove', del).then(finish); else finish();
   });
@@ -440,16 +541,21 @@ function assignFiles(tid){
     // 4. 兜底：根目录视频，否则列出全部视频
     if (!files || !files.length) files = res.root.length ? res.root : Object.keys(res.dirs).reduce(function(acc,dn){ return acc.concat(res.dirs[dn]); }, []);
     if (!files || !files.length) return; // 还没有视频出现，下次刷新再试
-    var wasOpen = taskFiles[tid] ? taskFiles[tid]._open : true;
     taskFiles[tid] = files;
-    taskFiles[tid]._open = wasOpen;
+    lastRaw.forEach(function(x){ if (x.id === tid) x.files = files; });
     renderTasks();
     renderFileList();
   });
 }
 function toggleFolder(tid){
-  if (taskFiles[tid] && taskFiles[tid]._open) { taskFiles[tid]._open = false; renderTasks(); return; }
-  if (taskFiles[tid] && taskFiles[tid].length) { taskFiles[tid]._open = true; renderTasks(); return; }
+  var t = null;
+  lastRaw.forEach(function(x){ if (x.id === tid) t = x; });
+  if (t && t.files && t.files.length) {         // 已有文件清单，纯展开/收起
+    expanded[tid] = (expanded[tid] === false);
+    renderTasks();
+    return;
+  }
+  expanded[tid] = true;                          // 还没有清单（AList 回退模式）→ 去扫盘
   assignFiles(tid);
 }
 
