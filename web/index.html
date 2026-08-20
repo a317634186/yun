@@ -58,6 +58,18 @@ button.del-btn:hover{background:#5a2020}
 .toast{position:fixed;left:50%;transform:translateX(-50%);bottom:28px;background:#243350;border:1px solid #33456b;color:#dbe4f0;padding:10px 18px;border-radius:10px;opacity:0;transition:opacity .3s;pointer-events:none;z-index:9}
 .toast.show{opacity:1}
 .now-playing{color:#4f8cff;font-size:11px;margin-left:6px}
+.pbar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:10px 12px;background:#121a2a;border-top:1px solid #1f2a3f;font-size:12px;color:#8ea2c4}
+.pbar label{display:flex;align-items:center;gap:5px}
+.pbar .badge{padding:3px 8px;border-radius:6px;background:#243350;color:#9fb6dc;white-space:nowrap}
+.pbar .badge.direct{background:#12331c;color:#5fc27e}
+.pbar .badge.hls{background:#3a2d10;color:#e0b155}
+.pbar select{background:#0e1420;color:#dbe4f0;border:1px solid #2a3852;border-radius:6px;padding:4px 6px;font:inherit;max-width:190px}
+.pbar .grow{flex:1;min-width:0}
+.pbar .note{color:#7c8dab;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.loading{display:flex;align-items:center;justify-content:center;aspect-ratio:16/9;color:#8ea2c4;flex-direction:column;gap:12px}
+.spin{width:26px;height:26px;border:3px solid #2a3852;border-top-color:#4f8cff;border-radius:50%;animation:sp 1s linear infinite}
+@keyframes sp{to{transform:rotate(360deg)}}
+video::cue{font-size:20px;background:rgba(0,0,0,.55);text-shadow:0 1px 2px #000}
 </style>
 </head>
 <body>
@@ -80,8 +92,16 @@ button.del-btn:hover{background:#5a2020}
       <label class="autolabel"><input type="checkbox" id="chk-auto" checked>完成自动播放</label>
     </div>
     <div class="playerbox">
-      <video id="video" controls preload="metadata" class="hidden"></video>
+      <video id="video" controls preload="metadata" playsinline class="hidden"></video>
+      <div class="loading hidden" id="player-loading"><div class="spin"></div><div id="loading-text">正在准备…</div></div>
       <div class="ptip" id="player-tip"><div class="big">🎬</div><div>添加磁力链接开始下载，下载中即可点击播放</div></div>
+      <div class="pbar hidden" id="pbar">
+        <span class="badge" id="mode-badge"></span>
+        <span class="note grow" id="mode-note"></span>
+        <label id="wrap-quality" class="hidden">清晰度<select id="sel-quality"></select></label>
+        <label id="wrap-audio" class="hidden">音轨<select id="sel-audio"></select></label>
+        <label id="wrap-sub" class="hidden">字幕<select id="sel-sub"></select></label>
+      </div>
     </div>
     <div class="tabs">
       <button data-tab="tasks" class="active">下载列表</button>
@@ -116,8 +136,11 @@ function fmtSize(n){ n=+n||0; if(n<1024) return n+'B'; var u=['KB','MB','GB','TB
 function fmtTime(s){ s=Math.floor(+s||0); var h=Math.floor(s/3600),m=Math.floor(s%3600/60),x=s%60; return (h?h+':':'')+(h&&m<10?'0':'')+m+':'+(x<10?'0':'')+x; }
 function fmtDate(ts){ var d=new Date(ts); return (d.getMonth()+1)+'-'+d.getDate()+' '+String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0'); }
 function fileDate(f){ var m=f&&f.modified; if(!m) return new Date(); if(typeof m==='number') return new Date(m*1000); var d=new Date(m); return isNaN(+d)?new Date():d; }
+var srvCfg = {retention_hours: 1};   // 由 /stream/health 下发，清理策略以服务端为准
 function remainText(f){
-  var remain = 60 - Math.floor((Date.now()-fileDate(f))/60000);
+  var rh = +srvCfg.retention_hours || 0;
+  if (rh <= 0) return '长期保留';
+  var remain = Math.round(rh*60 - (Date.now()-fileDate(f))/60000);
   if (remain <= 1) return '即将清理';
   return '⏳剩'+remain+'分';
 }
@@ -134,6 +157,20 @@ function api(path, body, retry){
       if (j.code === 401 && auth && !retry) return doLogin(auth.u, auth.p, true).then(function(){ return api(path, body, true); });
       return j;
     });
+}
+/* 带登录态的 GET（用于 /stream/*、/ls/*），401 自动续期后重试一次 */
+function authGet(url, retry){
+  return fetch(url, {headers: token ? {Authorization: token} : {}}).then(function(r){
+    if (r.status === 401 && auth && !retry) {
+      return doLogin(auth.u, auth.p, true).then(function(){ return authGet(url, true); });
+    }
+    return r.json().then(function(j){
+      if (j && j.code === 401 && auth && !retry) {
+        return doLogin(auth.u, auth.p, true).then(function(){ return authGet(url, true); });
+      }
+      return j;
+    });
+  });
 }
 function doLogin(u, p, silent){
   return fetch('/api/auth/login', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({username:u, password:p})})
@@ -163,7 +200,18 @@ function enterApp(){
   document.getElementById('userbar').innerHTML = esc(auth.u)+' · <a href="#" id="lnk-logout" style="color:#7c8dab">退出</a>';
   document.getElementById('lnk-logout').onclick = function(){ localStorage.removeItem('yun_token'); localStorage.removeItem('yun_auth'); location.reload(); return false; };
   healStorage();
+  loadSrvCfg();
   refreshTasks(); refreshFiles(); renderHistory();
+}
+
+/* 读服务端播放/清理配置（保留时长、转码上限等） */
+function loadSrvCfg(){
+  authGet('/stream/health').then(function(j){
+    if (!j || j.retention_hours == null) return;
+    srvCfg = j;
+    if (j.ffmpeg === '不可用') toast('转码服务里的 ffmpeg 不可用，只能播浏览器原生支持的格式');
+    if (j.disk && j.disk.used_percent >= 90) toast('磁盘已用 '+j.disk.used_percent+'%，旧文件会被优先清理');
+  }).catch(function(){ /* 转码服务没起来时不打扰用户，播放时自然会报错 */ });
 }
 
 /* ===== 添加下载 ===== */
@@ -250,6 +298,7 @@ function delFile(path){
   var dir = path.slice(0, path.length - name.length - 1) || DL;
   api('/fs/remove', {dir:dir, names:[name]}).then(function(j){
     delete knownVideos[path];
+    scanCache = null;
     toast(j.code===200?'已删除':'删除失败：'+(j.message||''));
     refreshTasks(); renderFileList();
   });
@@ -269,6 +318,7 @@ function delTask(tid){
       api('/admin/task/offline_download/delete?tid='+encodeURIComponent(tid), {});
       api('/admin/task/offline_download_transfer/delete?tid='+encodeURIComponent(tid), {});
       delete taskFiles[tid];
+      scanCache = null;
       toast('已删除');
       refreshTasks(); renderFileList();
     };
@@ -278,9 +328,10 @@ function delTask(tid){
 
 /* ===== 目录列表（nginx 直接读磁盘，无需 AList 存储，下载中即可见） ===== */
 function lsDir(path){
-  return fetch('/ls' + path + '/').then(function(r){ return r.json(); })
+  return authGet('/ls' + path.split('/').map(encodeURIComponent).join('/') + '/')
     .then(function(arr){
-      return (arr||[]).map(function(e){
+      if (!Array.isArray(arr)) return null;   // 401 / 目录不存在时按「读不到」处理
+      return arr.map(function(e){
         var n = e.name; try { n = decodeURIComponent(n); } catch(err){}
         return {name:n, is_dir:e.type==='directory', size:+e.size||0, modified:e.mtime};
       });
@@ -301,7 +352,20 @@ function healStorage(){
 
 /* ===== 展开/扫描文件 ===== */
 var scanTs = {};   // tid -> last scan time (throttle)
+// 多个任务会同时要求扫目录，3 秒内合并成一次，别把请求打散
+var scanCache = null, scanCacheTs = 0, scanWaiters = null;
 function collectVideos(cb){
+  if (scanCache && Date.now() - scanCacheTs < 3000) return cb(scanCache);
+  if (scanWaiters) { scanWaiters.push(cb); return; }
+  scanWaiters = [cb];
+  var done = function(res){
+    if (res) { scanCache = res; scanCacheTs = Date.now(); }
+    var ws = scanWaiters; scanWaiters = null;
+    ws.forEach(function(w){ w(res); });
+  };
+  scanOnce(done);
+}
+function scanOnce(cb){
   lsDir(DL).then(function(items){
     if (!items) return cb(null);
     var dirs = items.filter(function(f){ return f.is_dir; });
@@ -403,23 +467,226 @@ function checkAutoPlay(path){
   play(path, 0);
 }
 
-/* ===== 播放 ===== */
+/* ===== 播放 =====
+   先问 /stream/probe：原文件浏览器能直接吃就直连（零 CPU、可拖动、可边下边播），
+   否则走服务端按需转码的 HLS（H.265 / AC3 / DTS / MKV 全部能播，同时省 VPS 流量）。 */
 var video = document.getElementById('video');
-function play(path, resume){
-  currentPlayPath = path;
-  renderTasks(); // update "播放中" labels
-  // construct direct stream URL via nginx proxy (encode each segment for 中文/空格/#)
-  // path is like /downloads/filename.mp4 or /downloads/subdir/filename.mp4
-  var src = '/d' + path.split('/').map(encodeURIComponent).join('/');
+var hls = null;          // hls.js 实例
+var cur = null;          // 当前文件的 probe 结果
+var playMode = 'direct', playHeight = 0, playAudio = null;
+var hlsJsLoading = null;
+var playSeq = 0;                 // 快速连点/切换清晰度时，丢弃过期的回调
+var directFallbackTried = {};    // 每个文件最多自动降级一次，避免来回打转
+
+function setLoading(text){
+  document.getElementById('player-tip').classList.add('hidden');
+  video.classList.add('hidden');
+  document.getElementById('player-loading').classList.remove('hidden');
+  document.getElementById('loading-text').textContent = text || '正在准备…';
+}
+function showVideo(){
+  document.getElementById('player-loading').classList.add('hidden');
   document.getElementById('player-tip').classList.add('hidden');
   video.classList.remove('hidden');
-  video.src = src;
-  // resume position
-  var hc = hist[path];
-  if (resume == null) resume = (hc && hc.pos > 10 && hc.pos < hc.dur*0.95) ? hc.pos : 0;
-  video.addEventListener('loadedmetadata', function(){ if (resume>0) video.currentTime = resume; }, {once:true});
-  video.play().catch(function(){});
+}
+function showIdle(msg){
+  document.getElementById('player-loading').classList.add('hidden');
+  video.classList.add('hidden');
+  var tip = document.getElementById('player-tip');
+  if (msg) tip.innerHTML = '<div class="big">😕</div><div>'+esc(msg)+'</div>';
+  tip.classList.remove('hidden');
+}
+function destroyHls(){ if (hls){ try { hls.destroy(); } catch(e){} hls = null; } }
+
+/* hls.js：优先用镜像内置的本地副本，拉不到再退到公网 CDN */
+function loadHlsJs(){
+  if (window.Hls) return Promise.resolve();
+  if (hlsJsLoading) return hlsJsLoading;
+  var urls = ['/stream/hls.js',
+              'https://cdn.jsdelivr.net/npm/hls.js@1/dist/hls.min.js',
+              'https://unpkg.com/hls.js@1/dist/hls.min.js'];
+  hlsJsLoading = urls.reduce(function(chain, u){
+    return chain.catch(function(){
+      return new Promise(function(res, rej){
+        var s = document.createElement('script');
+        s.src = u;
+        s.onload = function(){ window.Hls ? res() : rej(new Error('bad script')); };
+        s.onerror = function(){ rej(new Error('load fail')); };
+        document.head.appendChild(s);
+      });
+    });
+  }, Promise.reject(new Error('start'))).catch(function(e){ hlsJsLoading = null; throw e; });
+  return hlsJsLoading;
+}
+
+function play(path, resume){
+  currentPlayPath = path;
+  renderTasks();
+  destroyHls();
+  document.getElementById('pbar').classList.add('hidden');
+  setLoading('正在探测视频信息…');
   video.scrollIntoView({behavior:'smooth', block:'start'});
+  authGet('/stream/probe?p=' + encodeURIComponent(path)).then(function(j){
+    if (!j || j.code !== 200 || !j.data) throw new Error((j && j.message) || '探测失败');
+    cur = j.data;
+    buildPbar();
+    var pos = resume;
+    if (pos == null) {
+      var hc = hist[path];
+      pos = (hc && hc.pos > 10 && (!hc.dur || hc.pos < hc.dur*0.95)) ? hc.pos : 0;
+    }
+    return start(cur.mode, cur.default_height, cur.default_audio, pos);
+  }).catch(function(e){
+    showIdle('无法播放：' + (e.message || e));
+    toast('无法播放：' + (e.message || e));
+  });
+}
+
+function hlsUrl(height, audioIdx){
+  var u = '/stream/hls/index.m3u8?p=' + encodeURIComponent(cur.path)
+        + '&h=' + height + '&pt=' + encodeURIComponent(cur.ticket);
+  if (audioIdx != null) u += '&a=' + audioIdx;
+  return u;
+}
+
+function start(mode, height, audioIdx, pos){
+  playMode = mode; playHeight = height; playAudio = audioIdx;
+  destroyHls();
+  applySubs();
+  updateBadge();
+  var seekTo = pos || 0;
+  var seq = ++playSeq;
+  video.addEventListener('loadedmetadata', function(){
+    if (seq !== playSeq) return;   // 已经切到别的源了，别把进度拨回去
+    if (seekTo > 0) { try { video.currentTime = seekTo; } catch(e){} }
+    applySubChoice();
+  }, {once:true});
+
+  if (mode === 'direct') {
+    setLoading('正在加载原文件…');
+    video.src = cur.direct_url;
+    showVideo();
+    video.play().catch(function(){});
+    return Promise.resolve();
+  }
+
+  setLoading('正在转码，首次开播要等几秒…');
+  var url = hlsUrl(height, audioIdx);
+  if (video.canPlayType('application/vnd.apple.mpegurl')) {   // Safari 原生吃 HLS
+    video.src = url;
+    showVideo();
+    video.play().catch(function(){});
+    return Promise.resolve();
+  }
+  return loadHlsJs().then(function(){
+    if (!Hls.isSupported()) throw new Error('浏览器不支持 MSE');
+    hls = new Hls({
+      maxBufferLength: 30, maxMaxBufferLength: 60,
+      manifestLoadingTimeOut: 60000,
+      fragLoadingTimeOut: 300000,      // 单片转码在弱 VPS 上可能要几十秒
+      fragLoadingMaxRetry: 4
+    });
+    hls.on(Hls.Events.MANIFEST_PARSED, function(){ showVideo(); video.play().catch(function(){}); });
+    hls.on(Hls.Events.ERROR, function(_e, data){
+      if (!data || !data.fatal) return;
+      if (data.type === Hls.ErrorTypes.MEDIA_ERROR) { try { hls.recoverMediaError(); return; } catch(e){} }
+      var code = data.response && data.response.code;
+      if (code === 401) {   // 票据过期：重新探测换张新票据，无感续播
+        toast('播放票据过期，正在重新获取…');
+        play(cur.path, video.currentTime || 0);
+        return;
+      }
+      toast(code === 409 ? '视频还没下载到足够数据，等一会儿再播'
+                         : '转码播放失败：' + (data.details || '未知错误') + '（可试试更低清晰度）');
+    });
+    hls.loadSource(url);
+    hls.attachMedia(video);
+  }).catch(function(){
+    toast('hls.js 加载失败，改用原画直连（可能不兼容）');
+    video.src = cur.direct_url;
+    showVideo();
+    video.play().catch(function(){});
+  });
+}
+
+/* ===== 播放器控制条：清晰度 / 音轨 / 字幕 ===== */
+function updateBadge(){
+  var b = document.getElementById('mode-badge');
+  b.className = 'badge ' + (playMode === 'direct' ? 'direct' : 'hls');
+  b.textContent = playMode === 'direct' ? '原画直连' : ('转码 ' + playHeight + 'p');
+  document.getElementById('mode-note').textContent = cur ? cur.reason : '';
+}
+
+function buildPbar(){
+  document.getElementById('pbar').classList.remove('hidden');
+
+  var sq = document.getElementById('sel-quality');
+  var opts = [{v:'direct', t: cur.mode === 'direct' ? '原画直连（推荐）' : '原画直连（可能不兼容）'}];
+  (cur.heights || []).slice().sort(function(a,b){ return b-a; }).forEach(function(h){
+    opts.push({v:'h'+h, t:'转码 '+h+'p'});
+  });
+  sq.innerHTML = opts.map(function(o){ return '<option value="'+o.v+'">'+esc(o.t)+'</option>'; }).join('');
+  sq.value = cur.mode === 'direct' ? 'direct' : ('h' + cur.default_height);
+  document.getElementById('wrap-quality').classList.remove('hidden');
+  sq.onchange = function(){
+    var pos = video.currentTime || 0;
+    if (sq.value === 'direct') start('direct', playHeight, playAudio, pos);
+    else start('hls', parseInt(sq.value.slice(1), 10), playAudio, pos);
+  };
+
+  var sa = document.getElementById('sel-audio');
+  var wa = document.getElementById('wrap-audio');
+  if ((cur.audios || []).length > 1) {
+    sa.innerHTML = cur.audios.map(function(a){
+      return '<option value="'+a.index+'">'+esc(a.label)+'</option>';
+    }).join('');
+    sa.value = String(cur.default_audio);
+    wa.classList.remove('hidden');
+    sa.onchange = function(){
+      var pos = video.currentTime || 0;
+      // 直连模式下浏览器只认第一条音轨，切音轨必须转码
+      start('hls', playMode === 'direct' ? cur.default_height : playHeight,
+            parseInt(sa.value, 10), pos);
+      document.getElementById('sel-quality').value = 'h' + playHeight;
+    };
+  } else {
+    wa.classList.add('hidden');
+  }
+
+  var ss = document.getElementById('sel-sub');
+  var ws = document.getElementById('wrap-sub');
+  if ((cur.subs || []).length) {
+    ss.innerHTML = '<option value="-1">关闭</option>' + cur.subs.map(function(s, i){
+      return '<option value="'+i+'">'+esc(s.label)+'</option>';
+    }).join('');
+    // 有中文字幕就默认打开
+    var zh = -1;
+    cur.subs.forEach(function(s, i){
+      if (zh < 0 && /chi|zho|zh|chs|cht|简|繁|中/i.test((s.lang||'') + ' ' + (s.label||''))) zh = i;
+    });
+    ss.value = String(zh);
+    ws.classList.remove('hidden');
+    ss.onchange = applySubChoice;
+  } else {
+    ws.classList.add('hidden');
+  }
+}
+
+function applySubs(){
+  Array.prototype.slice.call(video.querySelectorAll('track')).forEach(function(t){ t.remove(); });
+  (cur.subs || []).forEach(function(s, i){
+    var t = document.createElement('track');
+    t.kind = 'subtitles';
+    t.label = s.label || ('字幕' + (i+1));
+    t.srclang = (s.lang || 'zh').slice(0, 8);
+    t.src = s.url;
+    video.appendChild(t);
+  });
+}
+function applySubChoice(){
+  var want = parseInt(document.getElementById('sel-sub').value, 10);
+  var tt = video.textTracks;
+  for (var i = 0; i < tt.length; i++) tt[i].mode = (i === want) ? 'showing' : 'disabled';
 }
 video.addEventListener('timeupdate', function(){
   var p = currentPlayPath; if (!p) return;
@@ -428,7 +695,19 @@ video.addEventListener('timeupdate', function(){
   saveHistSoon();
 });
 video.addEventListener('ended', function(){ var p=currentPlayPath; if(p&&hist[p]){ hist[p].pos=hist[p].dur||hist[p].pos; saveHist(); } });
-video.addEventListener('error', function(){ toast('视频加载失败：可能尚未下载到足够数据（稍后再试）、已被自动清理（保留 1 小时）或格式浏览器不支持'); });
+video.addEventListener('error', function(){
+  if (!video.error) return;              // 切源过程中的伪 error 不处理
+  var p = currentPlayPath;
+  if (playMode === 'direct' && cur && p && !directFallbackTried[p]) {
+    // 直连播不动就自动降级去转码，用户不用自己琢磨格式问题；每个文件只自动降一次
+    directFallbackTried[p] = 1;
+    toast('原文件浏览器播不了，正在切换到转码播放…');
+    document.getElementById('sel-quality').value = 'h' + cur.default_height;
+    start('hls', cur.default_height, playAudio, video.currentTime || 0);
+    return;
+  }
+  toast('视频加载失败：可能还没下载到足够数据、已被自动清理，或转码进程异常（可看 bash menu.sh logs）');
+});
 window.addEventListener('beforeunload', saveHist);
 var saveTimer;
 function saveHistSoon(){ clearTimeout(saveTimer); saveTimer = setTimeout(saveHist, 4000); }
@@ -485,34 +764,13 @@ chkAuto.onchange = function(){ localStorage.setItem('yun_autoplay', chkAuto.chec
   } else show(true);
 })();
 
-/* ===== 自动清理（1 小时过期） ===== */
-function cleanExpired(){
-  lsDir(DL).then(function(items){
-    if (!items) return;
-    var expired = items.filter(function(f){ return (Date.now()-fileDate(f)) > 3600000; });
-    if (!expired.length) return;
-    var allNames = expired.map(function(f){ return f.name; });
-    api('/fs/remove', {dir:DL, names:allNames}).then(function(j2){
-      if (j2.code === 200) {
-        allNames.forEach(function(n){
-          var p = DL+'/'+n;
-          delete knownVideos[p];
-          Object.keys(taskFiles).forEach(function(tid){
-            taskFiles[tid] = taskFiles[tid].filter(function(f){ return f.path !== p && !f.path.startsWith(p+'/'); });
-          });
-        });
-        refreshTasks(); renderFileList();
-      }
-    });
-  });
-}
+// 过期清理已由服务端 caster 常驻执行（关掉网页也照样生效），前端不再参与删除
 
-// 定时刷新下载进度 + 文件列表 + 自动清理
+// 定时刷新下载进度 + 文件列表
 setInterval(function(){
   if (token && !document.hidden && !document.getElementById('app-view').classList.contains('hidden')) {
     refreshTasks();
     refreshFiles();
-    cleanExpired();
   }
 }, 5000);
 </script>

@@ -14,6 +14,41 @@ services:
     expose:
       - "5244"                        # 仅内部访问，由前端容器反代
 
+  caster:
+    build: ./caster                   # python + ffmpeg：探测、转码、字幕、鉴权、清理
+    container_name: yun-caster
+    restart: always
+    environment:
+      - TZ=Asia/Shanghai
+      - ALIST_URL=http://alist:5244
+      - MEDIA_ROOT=/media
+      - CACHE_DIR=/cache
+      - MOUNT_PREFIX=/downloads
+      - STREAM_SECRET=${STREAM_SECRET:-}
+      # —— 播放质量与算力 ——
+      - MAX_HEIGHT=${MAX_HEIGHT:-720}            # 转码高度上限，VPS 越弱就调越低（480）
+      - VIDEO_QUALITY=${VIDEO_QUALITY:-23}       # 画质，数字越小越清晰越吃 CPU（18-28）
+      - X264_PRESET=${X264_PRESET:-veryfast}
+      - VIDEO_ENCODER=${VIDEO_ENCODER:-libx264}  # 有硬件编码时可换 h264_nvenc / h264_qsv / h264_vaapi
+      - HWACCEL=${HWACCEL:-none}                 # 硬件解码：none / auto / vaapi / qsv / cuda
+      - TRANSCODE_JOBS=${TRANSCODE_JOBS:-2}      # 同时跑几个 ffmpeg，建议 = CPU 核数
+      - SEG_SECONDS=${SEG_SECONDS:-6}
+      - PREWARM_SEGMENTS=${PREWARM_SEGMENTS:-3}
+      # —— 清理策略 ——
+      - RETENTION_HOURS=${RETENTION_HOURS:-1}    # 下载文件保留小时数，0 = 永不自动删
+      - MAX_DISK_PERCENT=${MAX_DISK_PERCENT:-90} # 磁盘超过此占用率就先删最旧的
+      - CACHE_MAX_MB=${CACHE_MAX_MB:-4096}       # 转码分片缓存上限
+      - CLEAN_INTERVAL=${CLEAN_INTERVAL:-300}
+      # —— 鉴权 ——
+      - AUTH_ENFORCE=${AUTH_ENFORCE:-1}          # 0 = 关闭直链鉴权（不建议）
+    volumes:
+      - ./downloads:/media            # 需要可写：过期清理在这里执行
+      - ./cache:/cache                # 转码分片缓存
+    expose:
+      - "8000"
+    depends_on:
+      - alist
+
   web:
     image: nginx:alpine                # 播放器前端页面 + 反向代理
     container_name: yun-web
@@ -26,3 +61,4 @@ services:
       - ./downloads:/srv/downloads:ro
     depends_on:
       - alist
+      - caster

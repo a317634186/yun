@@ -33,11 +33,13 @@ require_compose() {
 
 gen_secret() { tr -dc 'a-zA-Z0-9' </dev/urandom | head -c 32; }
 
-get_port() {
-    local p
-    p=$(sed -n 's/^PORT=//p' .env 2>/dev/null | tr -d '"' | tail -1)
-    echo "${p:-5244}"
+get_env() { # $1=变量名 $2=默认值；顺手去掉行尾注释
+    local v
+    v=$(sed -n "s/^$1=//p" .env 2>/dev/null | tail -1 | sed 's/[[:space:]]*#.*$//' | tr -d '" ')
+    echo "${v:-$2}"
 }
+
+get_port() { get_env PORT 5244; }
 
 set_env() { # $1=变量名 $2=值
     if grep -q "^$1=" .env 2>/dev/null; then
@@ -45,6 +47,29 @@ set_env() { # $1=变量名 $2=值
     else
         echo "$1=$2" >> .env
     fi
+}
+
+ask_env() { # $1=变量名 $2=提示 $3=当前值
+    local v
+    read -rp "$2 [当前 $3]: " v
+    [ -n "$v" ] || { info "未修改"; return 1; }
+    set_env "$1" "$v"
+    info "$1 已改为 $v"
+}
+
+# 按 CPU 核数给转码参数一个合理起点，用户可用菜单 10 再调
+autotune() {
+    local cores
+    cores=$(nproc 2>/dev/null || echo 1)
+    [ "$cores" -ge 1 ] 2>/dev/null || cores=1
+    set_env TRANSCODE_JOBS "$([ "$cores" -gt 4 ] && echo 4 || echo "$cores")"
+    # 1080p 实时转码对 VPS 挺吃力，宁可保守一点，用户嫌糊再用菜单 10 往上调
+    if   [ "$cores" -le 1 ]; then set_env MAX_HEIGHT 480;  set_env X264_PRESET ultrafast
+    elif [ "$cores" -le 3 ]; then set_env MAX_HEIGHT 720;  set_env X264_PRESET veryfast
+    elif [ "$cores" -le 7 ]; then set_env MAX_HEIGHT 720;  set_env X264_PRESET faster
+    else                          set_env MAX_HEIGHT 1080; set_env X264_PRESET veryfast
+    fi
+    info "已按 ${cores} 核 CPU 自动设置转码参数（上限 $(get_env MAX_HEIGHT 720)p）"
 }
 
 MENU_IP=""
@@ -103,6 +128,9 @@ do_install() {
     [ -f data/config.db ] && fresh=0
 
     [ -f .env ] || cp .env.example .env 2>/dev/null || echo "PORT=5244" > .env
+    # 直链签名密钥：只在首次生成，之后一直复用
+    [ -n "$(get_env STREAM_SECRET '')" ] || set_env STREAM_SECRET "$(gen_secret)"
+    [ "$fresh" -eq 1 ] && autotune
     local port; port=$(get_port)
 
     if [ "$fresh" -eq 1 ]; then
@@ -110,7 +138,8 @@ do_install() {
     else
         warn "检测到已有数据，将保留原有配置，仅重建容器"
     fi
-    $SUDO $DC up -d || { error "启动失败，查看日志: bash menu.sh logs"; return 1; }
+    info "构建转码服务镜像（首次约 1-3 分钟）..."
+    $SUDO $DC up -d --build || { error "启动失败，查看日志: bash menu.sh logs"; return 1; }
 
     if command -v curl >/dev/null 2>&1; then
         info "等待服务启动..."
@@ -162,15 +191,19 @@ do_update() {
         git pull --ff-only || warn "代码更新失败（网络原因），继续更新镜像"
     fi
     info "拉取最新镜像..."
-    $SUDO $DC pull
-    info "重启服务..."
-    $SUDO $DC up -d --remove-orphans
+    if $SUDO $DC pull --help 2>/dev/null | grep -q ignore-buildable; then
+        $SUDO $DC pull --ignore-buildable || warn "镜像拉取有失败项，继续"
+    else
+        $SUDO $DC pull || warn "镜像拉取有失败项，继续"
+    fi
+    info "重建并重启服务..."
+    $SUDO $DC up -d --build --remove-orphans
     info "更新完成"
 }
 
 do_restart() {
     require_compose || return 1
-    $SUDO $DC up -d && $SUDO $DC restart
+    $SUDO $DC up -d --build && $SUDO $DC restart
     info "已启动/重启"
 }
 
@@ -183,17 +216,31 @@ do_stop() {
 do_status() {
     require_compose || return 1
     $SUDO $DC ps
-    if $SUDO docker ps --format '{{.Names}}' 2>/dev/null | grep -q '^alist$'; then
-        info "alist 容器运行中"
-    else
-        warn "alist 容器未在运行"
-    fi
-    echo; info "下载目录占用:"; $SUDO du -sh "$(pwd)/downloads" 2>/dev/null || echo "  （暂无下载数据）"
+    local n
+    for n in alist yun-caster yun-web; do
+        if $SUDO docker ps --format '{{.Names}}' 2>/dev/null | grep -qx "$n"; then
+            info "$n 运行中"
+        else
+            warn "$n 未在运行"
+        fi
+    done
+    echo
+    info "转码服务自检:"
+    $SUDO docker exec yun-caster ffmpeg -version 2>/dev/null | head -1 \
+        || warn "  转码服务内取不到 ffmpeg（容器可能没起来，看菜单 7 日志）"
+    echo
+    info "磁盘占用:"
+    $SUDO du -sh "$(pwd)/downloads" 2>/dev/null || echo "  下载目录：暂无数据"
+    $SUDO du -sh "$(pwd)/cache" 2>/dev/null     || echo "  分片缓存：暂无数据"
+    $SUDO df -h "$(pwd)" 2>/dev/null | tail -1
 }
 
 do_logs() {
     require_compose || return 1
-    $SUDO $DC logs --tail=100 alist
+    echo -e "${CYAN}—— 下载服务 (alist) ——${PLAIN}"
+    $SUDO $DC logs --tail=60 alist
+    echo -e "${CYAN}—— 转码播放服务 (caster) ——${PLAIN}"
+    $SUDO $DC logs --tail=60 caster
 }
 
 do_uninstall() {
@@ -205,15 +252,16 @@ do_uninstall() {
 
     read -rp "是否删除数据（配置/下载的文件）？(y/N): " yn
     if [ "$yn" = "y" ] || [ "$yn" = "Y" ]; then
-        $SUDO rm -rf data downloads .env
-        info "数据目录与 .env 已删除"
+        $SUDO rm -rf data downloads cache .env
+        info "数据目录、分片缓存与 .env 已删除"
     else
-        info "保留数据目录：$(pwd)/data $(pwd)/downloads"
+        info "保留数据目录：$(pwd)/data $(pwd)/downloads $(pwd)/cache"
     fi
 
     read -rp "是否删除 Docker 镜像？(y/N): " yn
     if [ "$yn" = "y" ] || [ "$yn" = "Y" ]; then
         $SUDO docker image rm xhofe/alist-aria2:latest nginx:alpine 2>/dev/null
+        $SUDO docker image rm "$(basename "$(pwd)")-caster" yun-caster 2>/dev/null
         info "镜像已删除"
     fi
     info "卸载完成"
@@ -225,6 +273,37 @@ reset_password() {
     [ -n "$pw" ] || { warn "密码不能为空"; return 1; }
     $SUDO docker exec alist ./alist admin set "$pw" \
         && info "密码已重置，用新密码登录网页即可" || error "重置失败（容器未运行？）"
+}
+
+play_settings() {
+    require_compose || return 1
+    [ -f .env ] || cp .env.example .env 2>/dev/null
+    while true; do
+        echo
+        echo -e "${CYAN}—— 播放与清理设置 ——${PLAIN}"
+        echo "  1. 转码清晰度上限  MAX_HEIGHT       = $(get_env MAX_HEIGHT 720)p     （CPU 弱就调 480）"
+        echo "  2. 转码画质        VIDEO_QUALITY    = $(get_env VIDEO_QUALITY 23)      （18-28，越小越清晰越吃 CPU）"
+        echo "  3. 同时转码数      TRANSCODE_JOBS   = $(get_env TRANSCODE_JOBS 2)      （建议等于 CPU 核数）"
+        echo "  4. 文件保留小时数  RETENTION_HOURS  = $(get_env RETENTION_HOURS 1)      （0 = 永不自动删）"
+        echo "  5. 磁盘占用上限    MAX_DISK_PERCENT = $(get_env MAX_DISK_PERCENT 90)%"
+        echo "  6. 分片缓存上限    CACHE_MAX_MB     = $(get_env CACHE_MAX_MB 4096) MB"
+        echo "  7. 按 CPU 核数重新自动配置"
+        echo "  0. 保存并返回"
+        read -rp "改哪一项：" k
+        case "$k" in
+            1) ask_env MAX_HEIGHT       "输入清晰度上限（480 / 720 / 1080）" "$(get_env MAX_HEIGHT 720)" ;;
+            2) ask_env VIDEO_QUALITY    "输入画质数值（18-28）"              "$(get_env VIDEO_QUALITY 23)" ;;
+            3) ask_env TRANSCODE_JOBS   "输入同时转码数"                     "$(get_env TRANSCODE_JOBS 2)" ;;
+            4) ask_env RETENTION_HOURS  "输入保留小时数（0=永不删）"          "$(get_env RETENTION_HOURS 1)" ;;
+            5) ask_env MAX_DISK_PERCENT "输入磁盘占用上限百分比"              "$(get_env MAX_DISK_PERCENT 90)" ;;
+            6) ask_env CACHE_MAX_MB     "输入分片缓存上限（MB）"              "$(get_env CACHE_MAX_MB 4096)" ;;
+            7) autotune ;;
+            0) break ;;
+            *) warn "无效选择: $k" ;;
+        esac
+    done
+    info "应用设置..."
+    $SUDO $DC up -d && info "已生效（正在播放的页面刷新一下即可）"
 }
 
 change_port() {
@@ -242,7 +321,7 @@ change_port() {
 # ============ 菜单 ============
 
 menu_header() {
-    local installed="未安装" running="服务未运行"
+    local installed="未安装" running="服务未运行" caster="转码未运行"
     if [ -f data/config.db ] || $SUDO docker ps -a --format '{{.Names}}' 2>/dev/null | grep -q '^alist$'; then
         installed="已安装"
     fi
@@ -251,8 +330,11 @@ menu_header() {
     elif [ "$installed" = "已安装" ]; then
         running="服务已停止"
     fi
+    if $SUDO docker ps --format '{{.Names}}' 2>/dev/null | grep -qx 'yun-caster'; then
+        caster="转码就绪 $(get_env MAX_HEIGHT 720)p"
+    fi
     echo -e "${CYAN}------------------------------------------------${PLAIN}"
-    echo -e "  ${GREEN}yun 云播放器${PLAIN}  ·  ${installed} · ${running}"
+    echo -e "  ${GREEN}yun 云播放器${PLAIN}  ·  ${installed} · ${running} · ${caster}"
     echo -e "  面板地址: http://$(get_ip):$(get_port)"
     echo -e "${CYAN}------------------------------------------------${PLAIN}"
 }
@@ -272,6 +354,7 @@ main_menu() {
         echo "------------------------------------------------"
         echo "  8. 重置管理员密码"
         echo "  9. 修改访问端口"
+        echo " 10. 播放与清理设置（清晰度 / 保留时长 / 磁盘上限）"
         echo "------------------------------------------------"
         echo "  0. 退出"
         echo "------------------------------------------------"
@@ -286,6 +369,7 @@ main_menu() {
             7) do_logs ;;
             8) reset_password ;;
             9) change_port ;;
+            10) play_settings ;;
             0) exit 0 ;;
             *) warn "无效选择: $c" ;;
         esac
@@ -304,6 +388,7 @@ case "${1:-menu}" in
     uninstall) do_uninstall ;;
     passwd)    reset_password ;;
     port)      change_port ;;
+    settings)  play_settings ;;
     menu)      main_menu ;;
-    *) echo "用法: bash menu.sh [install|update|restart|stop|status|logs|uninstall|passwd|port]" ;;
+    *) echo "用法: bash menu.sh [install|update|restart|stop|status|logs|uninstall|passwd|port|settings]" ;;
 esac

@@ -2,3 +2,4 @@ data/
 aria2-config/
 downloads/
 .env
+cache/
